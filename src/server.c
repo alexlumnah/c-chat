@@ -12,21 +12,21 @@ int main(void) {
     Message *msg;
     Message* prev_msg;
 
-    while (1) {
-
-        status = poll_sockets(1000);
+    do {
 
         while ((msg = pop_msg()) != NULL) {
 
+            printf("Received message from %d of length %d: %s\n",msg->sender, msg->len, msg->data);
             // Echo message back
-            server_send_msg(msg->sender, msg->data, msg->len);
+            char string[] = "We hear you!";
+            server_send_msg(msg->sender, string, strlen(string) + 1);
 
             prev_msg = msg;
             msg = msg->next_msg;
 
             free(prev_msg);
         }
-    }
+    } while (poll_sockets(1000) == SOCK_SUCCESS);
 
     printf("Status: %d", status);
 

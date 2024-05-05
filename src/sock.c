@@ -18,9 +18,9 @@
 #define DEBUG_PRINT2(msg1, msg2) (printf("[DEBUG] %s %s\n", msg1, msg2))
 #define DEBUG_PRINT3(msg1, val) (printf("[DEBUG] %s %d\n", msg1, val))
 
-static ConnectionState connection;
+static SockState connection;
 
-ConnectionState* get_connection(void) {
+SockState* get_state(void) {
 
     return &connection;
 }
@@ -59,10 +59,11 @@ int send_msg(int socket_fd, char* data, size_t num_bytes) {
     uint16_t nw_len;
     char buffer[MAX_MESSAGE_LEN + 2] = {0};
 
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     if (num_bytes > MAX_MESSAGE_LEN) return SOCK_ERR_INVALID_MSG_LENGTH;
 
     // Convert message to string of bytes in network order
-    nw_len = htons((uint16_t)num_bytes + 1);    // Add one to end in 0
+    nw_len = htons((uint16_t)num_bytes);
     memcpy(&buffer, &nw_len, 2);
     strncpy(&buffer[2], data, num_bytes);
 
@@ -80,6 +81,8 @@ int recv_msg(int socket_fd) {
     ssize_t num_bytes;
     char buffer[MAX_MESSAGE_LEN] = {0};
     uint16_t msg_len = 0;
+
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
 
     // First check message length
     num_bytes = recv(socket_fd, &msg_len, sizeof(msg_len), 0);
@@ -123,21 +126,18 @@ int recv_msg(int socket_fd) {
     msg->len = msg_len;
     strncpy(msg->data, buffer, msg_len);
 
-    // Check who the message is received from
-    // This is inefficient, but allows for a simpler interface
-    // Default sender id is 0 for clients
-    for (int i = 0; i < connection.num_clients; i++) {
-        if (connection.clients[i].socket == socket_fd) {
-            msg->sender = connection.clients[i].id;
-            break;
-        }
+    // Populate sender field
+    if (connection.type == SOCK_SERVER) {
+        msg->sender = fd_to_id(socket_fd);
+    } else {
+        msg->sender = 0;    // ID 0 is reserved for server
     }
 
     // Find end of message queue, and add message to end
-    Message* queue_end = connection.msg_queue;
     if (connection.msg_queue == NULL) {
         connection.msg_queue = msg;
     } else {
+        Message* queue_end = connection.msg_queue;
         while (queue_end->next_msg != NULL) {
             queue_end = queue_end->next_msg;
         }
@@ -147,13 +147,37 @@ int recv_msg(int socket_fd) {
     return SOCK_SUCCESS;
 }
 
+// Lookup id based on client fd
+int id_to_fd(uint16_t id) {
+
+    for (int i = 0; i < connection.num_clients; i++) {
+        if (connection.clients[i].id == id) {
+            return connection.clients[i].fd;
+        }
+    }
+
+    return -1;  
+}
+
+// Lookup fd based on client id                                 
+int fd_to_id(int fd) {
+
+    for (int i = 0; i < connection.num_clients; i++) {
+        if (connection.clients[i].fd == fd) {
+            return connection.clients[i].id;
+        }
+    }
+
+    return -1;  
+}                                    
+
 // Start a server on the local host at specified port
 int start_server(char* port) {
 
     memset(&connection, 0, sizeof connection);   // Clear out state
 
     int status;             // Variable for storing function return status
-    int socket_fd;           // Variable for storing socket file descriptor
+    int socket_fd;          // Variable for storing socket file descriptor
 
     struct addrinfo hints = {0}; // Struct to pass inputs to getaddrinfo
     struct addrinfo *addr;       // Struct to get results from getaddrinfo
@@ -211,16 +235,6 @@ int start_server(char* port) {
     connection.type = SOCK_SERVER;
     connection.socket = socket_fd;
 
-    // Default id of server is 0
-    connection.id = 0;
-    connection.next_id++;
-
-
-    // Add our socket to the list of sockets to poll for inputs
-    connection.fds[0].fd = connection.socket;
-    connection.fds[0].events = POLLIN;
-    connection.fds[0].revents = 0;
-
     // Setup our message queue
     connection.msg_queue = NULL;
 
@@ -234,51 +248,51 @@ int accept_client(void) {
     struct sockaddr_storage cli_addr;
     socklen_t addr_len = sizeof cli_addr;
 
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
+    else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
+
     // Accept incoming connections
     client_socket = accept(connection.socket, (struct sockaddr *)&cli_addr, &addr_len);
     
-    if (client_socket == -1) return SOCK_ERR_UNABLE_TO_ACCEPT;
+    if (client_socket == -1 && errno == EWOULDBLOCK) return SOCK_ERR_NO_NEW_CONNECTIONS;
+    else if (client_socket == -1) return SOCK_ERR_SOCKET_DISCONNECT;
 
     if (connection.num_clients >= MAX_CLIENTS) {
         close(client_socket);
         return SOCK_ERR_TOO_MANY_CONNECTIONS;
     }
 
-    // On success, Add to client list
+    // Add new client to list
     connection.clients[connection.num_clients].id = connection.next_id;
-    connection.clients[connection.num_clients].socket = client_socket;
-
-    // Add to file descriptor polling list
-    connection.fds[connection.num_clients + 1].fd = client_socket;
-    connection.fds[connection.num_clients + 1].events = POLLIN;
-    connection.fds[connection.num_clients + 1].revents = 0;
-
-    connection.next_id++;
+    connection.clients[connection.num_clients].fd = client_socket;
+    connection.clients[connection.num_clients].active = ACTIVE;
     connection.num_clients++;
+    connection.next_id++;
 
-    printf("[New client connection. id: %d Socket: %d]\n", connection.clients[connection.num_clients - 1].id, client_socket);
+    printf("[Connecting client id: %d on socket: %d]\n", connection.clients[connection.num_clients].id, client_socket);
 
     return SOCK_SUCCESS;
 }
 
-// Close connection to client
-int disconnect_client(Client c) {
+// Close connection to client, mark connection as closed
+// Note: client still remains in list until it is flushed
+int disconnect_client(uint16_t client_id) {
+
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
+    else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
     // Remove from client and fd list by overwriting entry with final entry
     for (int i = 0; i < connection.num_clients; i++) {
-        if (c.id == connection.clients[i].id) {
-            printf("[Disconnecting client id: %d Socket: %d]\n", c.id, c.socket);
+        if (client_id == connection.clients[i].id) {
 
-            connection.clients[i] = connection.clients[connection.num_clients - 1];
-            connection.fds[i + 1] = connection.fds[connection.num_clients];
+            int socket_fd = connection.clients[i].fd;
+            printf("[Disconnecting client id: %d on socket: %d]\n", client_id, socket_fd);
 
-            connection.num_clients--;
+            // Mark socket as inactive
+            connection.clients[i].active = INACTIVE;
 
-            // Overwrite data
-            memset(&connection.clients[connection.num_clients], 0, sizeof(struct Client));
-            memset(&connection.fds[connection.num_clients + 1], 0, sizeof(struct pollfd));
-
-            close(c.socket);
+            // Close socket
+            close(connection.clients[i].fd);
 
             return SOCK_SUCCESS;
         }
@@ -287,32 +301,65 @@ int disconnect_client(Client c) {
     return SOCK_ERR_CLIENT_NOT_FOUND;
 }
 
-// Send data to client
-int server_send_msg(int16_t id, char* data, size_t num_bytes) {
+// Remove inactive client from list of clients
+int flush_inactive_client(uint16_t client_id) {
 
-    // TODO - Figure out a cleaner solution here, do we remove client ids all together?
-    int socket = 0;
-    for (int i = 0; i < connection.num_clients; i++) {
-        if (connection.clients[i].id == id) {
-            socket = connection.clients[i].socket;
-            break;
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
+    else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
+
+    // Remove from client and fd list by overwriting entry with final entry
+    for (int i = 1; i < connection.num_clients; i++) {
+        if (client_id == connection.clients[i].id) {
+
+            if (connection.clients[i].active != INACTIVE) {
+                PRINT_ERROR("Attempted to flush active client.");
+                return SOCK_ERR_CLIENT_STILL_ACTIVE;
+            }
+
+            printf("[Removing inactive client: %d]\n", client_id);
+
+            // Overwrite entry with data from last entry
+            connection.clients[i] = connection.clients[connection.num_clients - 1];
+
+            // Overwrite last entry with zeroes
+            memset(&connection.clients[connection.num_clients - 1], 0, sizeof(struct Client));
+
+            // Decrement number of clients
+            connection.num_clients--;
+
+            return SOCK_SUCCESS;
         }
     }
 
-    return send_msg(socket, data, num_bytes);
+    return SOCK_ERR_CLIENT_NOT_FOUND;
+}
+
+// Send message to client
+int server_send_msg(uint16_t client_id, char* data, size_t num_bytes) {
+
+    return send_msg(id_to_fd(client_id), data, num_bytes);
+}
+
+// Receive message from client
+int server_recv_msg(uint16_t client_id) {
+
+    return recv_msg(id_to_fd(client_id));
 }
 
 // Shutdown server and all client connections
 int shutdown_server(void) {
 
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
+    else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
+
     printf("Shutting down connection.\n");
-    for (int i = 0; i < connection.num_clients; i++) {
-        disconnect_client(connection.clients[i]);
+    for (int i = 1; i < connection.num_clients; i++) {
+        disconnect_client(connection.clients[i].id);
     }
 
     close(connection.socket);
 
-    memset(&connection, 0, sizeof(ConnectionState));
+    memset(&connection, 0, sizeof(SockState));
 
     return SOCK_SUCCESS;
 }
@@ -322,49 +369,58 @@ int shutdown_server(void) {
 int poll_sockets(int timeout) {
 
     // Poll for any activity
+    struct pollfd active_fds[MAX_CLIENTS + 1] = {0};
+    uint16_t active_ids[MAX_CLIENTS + 1] = {0};
+    int num_active;
     int num_events;
     int status;
 
-    num_events = poll(connection.fds, connection.num_clients + 1, timeout);
+    if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
+
+    // Create list of fds
+    num_active = 1;
+    active_fds[0].fd = connection.socket;
+    active_fds[0].events = POLLIN;
+    for (int i = 0; i < connection.num_clients; i++) {
+        if (connection.clients[i].active == ACTIVE) {
+            active_fds[num_active].fd = connection.clients[i].fd;
+            active_fds[num_active].events = POLLIN;
+            active_ids[num_active] = connection.clients[i].id; // Store id for future use
+            num_active++;
+        }
+    }
+
+    num_events = poll(active_fds, num_active, timeout);
 
     if (num_events < 0) return SOCK_ERR_POLL_FAILURE;
 
     if (connection.type == SOCK_SERVER) {
         // First check our connection for any incoming requests
-        if (connection.fds[0].revents & POLLIN) {
+        if (active_fds[0].revents & POLLIN) {
             DEBUG_PRINT("Polled new connection");
-            accept_client();
-        }
-
-        // Now check remaining ports for messages
-        // Store any disconnected clients in list to disconnect later
-        int disconnected_ids[MAX_CLIENTS] = {0};
-        int num_disconnected = 0;
-        for (int i = 1; i < connection.num_clients + 1; i++) {
-            if (connection.fds[i].revents & POLLIN) {
-                DEBUG_PRINT("Polled new message");
-                status = recv_msg(connection.fds[i].fd);
-                if (status == SOCK_ERR_SOCKET_DISCONNECT) {
-                    disconnected_ids[num_disconnected] = connection.clients[i - 1].id;
-                    num_disconnected++;
-                }
+            status = accept_client();
+            if (status == SOCK_ERR_SOCKET_DISCONNECT) {
+                DEBUG_PRINT("Socket error.");
+                shutdown_server();
+                return SOCK_ERR_SOCKET_DISCONNECT;
             }
         }
 
-        // Now disconnect all clients that were disconnected, starting at the back
-        for (int i = 0; i < num_disconnected; i++) {
-            for (int j = connection.num_clients - 1; j >= 0; j--) {
-                if (connection.clients[j].id == disconnected_ids[i]) {
-                    disconnect_client(connection.clients[j]);
-                    break;
+        // Now check remaining ports for messages
+        for (int i = 1; i < num_active; i++) {
+            if (active_fds[i].revents & POLLIN) {
+                DEBUG_PRINT("Polled new message");
+                status = recv_msg(active_fds[i].fd);
+                if (status == SOCK_ERR_SOCKET_DISCONNECT) {
+                    disconnect_client(active_ids[i]);
                 }
             }
         }
     } else if (connection.type == SOCK_CLIENT) {
         // Check if our client socket has any messages
-        if (connection.fds[0].revents & POLLIN) {
+        if (active_fds[0].revents & POLLIN) {
             DEBUG_PRINT("Polled new message");
-            status = recv_msg(connection.fds[0].fd);
+            status = recv_msg(active_fds[0].fd);
             if (status == SOCK_ERR_SOCKET_DISCONNECT) {
                 DEBUG_PRINT("Server disconnected.");
                 shutdown_client();
@@ -395,7 +451,7 @@ int start_client(char* host, char* port) {
 
     status = getaddrinfo(host, port, &hints, &addr);
     if (status != 0) {
-        fprintf(stderr, "Unable to get address: %s\n", gai_strerror(status));
+        PRINT_ERROR2("Unable to get address.", gai_strerror(status));
         return SOCK_ERR_CLIENT_START_FAILURE;
     }
 
@@ -424,11 +480,6 @@ int start_client(char* host, char* port) {
     connection.type = SOCK_CLIENT;
     connection.socket = socket_fd;
 
-     // Add our socket to the list of sockets to poll for inputs
-    connection.fds[0].fd = connection.socket;
-    connection.fds[0].events = POLLIN;
-    connection.fds[0].revents = 0;
-
     // Setup our message queue
     connection.msg_queue = NULL;
 
@@ -438,17 +489,21 @@ int start_client(char* host, char* port) {
 // Send message from client to server
 int client_send_msg(char* data, size_t num_bytes) {
 
+    if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
+
     return send_msg(connection.socket, data, num_bytes);
 }
 
 // Shutdown client
 int shutdown_client(void) {
 
+    if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
+
     printf("Shutting down client.\n");
 
     close(connection.socket);
 
-    memset(&connection, 0, sizeof(ConnectionState));
+    memset(&connection, 0, sizeof(SockState));
 
     return SOCK_SUCCESS;
 }

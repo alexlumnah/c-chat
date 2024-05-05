@@ -15,7 +15,10 @@ int main(void) {
     status = start_client("localhost","7778");
 
     do {
+        
         status = poll_sockets(1000);
+
+        if (status != SOCK_SUCCESS) break;
 
         while ((msg = pop_msg()) != NULL) {
             printf("Received message from %d of length %d: %s\n",msg->sender, msg->len, msg->data);
@@ -27,8 +30,8 @@ int main(void) {
         }
 
         if (buffer[0] != '\n') {
-            printf("Sending message\n");
-            client_send_msg(buffer, strlen(buffer));
+            printf("Sending message of length: %lu\n", strlen(buffer) + 1);
+            client_send_msg(buffer, strlen(buffer) + 1);
         }
 
     } while (fgets(buffer, MAX_MESSAGE_LEN, stdin));

@@ -1,8 +1,12 @@
+#ifndef SOCK_H
+#define SOCK_H
+
 #include <stdint.h>
+#include <stddef.h>
 #include <sys/poll.h>
 
 #define MAX_MESSAGE_LEN (65535)
-#define MAX_CLIENTS     (256)
+#define MAX_CLIENTS     (255)
 
 typedef enum {
     SOCK_SUCCESS = 0,
@@ -85,3 +89,5 @@ int start_client(char* host, char* port);                   // Start a client an
 int client_send_msg(char* data, size_t num_bytes);          // Send message from client to server
 int client_recv_msg(void);                                  // Receive and unpack a message, store in message queue
 int shutdown_client(void);                                  // Shutdown client
+
+#endif // SOCK_H

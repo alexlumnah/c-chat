@@ -1,252 +1,104 @@
+#include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include <netinet/in.h>
+#include <curses.h>
 
-#include "chat.h"
-#include "sock.h"
+#include "chat.h"    
 
-ChatRoom chat;
+int main(int argc, char* argv[]) {
 
-// Serialize message, typecast message into header, function will alloc required memory
-// Return number of bytes in buffer, return 0 on error
-size_t serialize_msg(MessageHeader* msg, char** buffer) {
+    int status;
 
-    uint16_t msg_len = 0;
+    // Server
+    if (argc == 2 && strncmp(argv[1],"-s",2) == 0) {
+        start_chat_server("7777");
+        chat_server_run();
+    } else {
 
-    switch (msg->type) {
-    case MSG_PING:
-        *buffer = calloc(1, 7); // Message header only requires 7 bytes
-        if (*buffer == NULL) return 0;
-        msg_len = 7;
-        break;
-    case MSG_USER_SETNAME:      // Intentional fall through
-    case MSG_USER_CONNECT:      // Intentional fall through
-    case MSG_USER_DISCONNECT: {
+        char buffer[MAX_MESSAGE_LEN] = {0};
+        int buff_len = 0;
 
-        // Get relevant data
-        UserMessage* user_msg = (UserMessage*)msg;
-        uint16_t id = htons(user_msg->id);
+        // Initialize chat client
+        printf("Connecting to chat server...\n");
+        status = start_chat_client("localhost","7777");
+        ChatClient* client = get_client();
 
-        // Allocate buffer memory, and create pointer to end of header data
-        *buffer = calloc(1, sizeof(UserMessage));
-        if (*buffer == NULL) return 0;
-        char* buff_ptr = *buffer + 7;   // Leave room for header
+        printf("%d\n",status);
 
-        // Serialize id
-        memcpy(buff_ptr, &id, sizeof(uint16_t));
-        buff_ptr = buff_ptr + sizeof(uint16_t);
-        
-        // Serialize username
-        strncat(buff_ptr, user_msg->username, MAX_USERNAME_LEN);
-        buff_ptr += strnlen(user_msg->username, MAX_USERNAME_LEN) + 1;  // Remember null byte
+        // Initialize ncurses library
+        initscr();
+        keypad(stdscr, TRUE);
+        noecho();
+        timeout(0); // Don't block waiting for character
+        scrollok(stdscr,TRUE);
 
-        // Calculate number of bytes and trim buffer down to size
-        msg_len = buff_ptr - *buffer;
-        *buffer = realloc(*buffer, msg_len);
+        // Loop, check for messages, and print out new messages
+        int c = 0;
+        while (status == 1 && c != 27) {
 
-        break;
-    }
-    case MSG_ACTIVE_USERS: {
 
-        // Get relevant data
-        ActiveUserMessage* user_msg = (ActiveUserMessage*)msg;
-        uint8_t num_users = user_msg->num_users;
-        uint16_t id;
+            // Poll for inputs
+            status = client_check_messages(1000);
 
-        // Allocate buffer memory, and create pointer to end of header data
-        *buffer = calloc(1, sizeof(ActiveUserMessage));
-        if (*buffer == NULL) return 0;
-        char* buff_ptr = *buffer + 7;   // Leave room for header
+            printf("%d\n",status);
 
-        // Serialize number of users
-        *buff_ptr = num_users;
-        buff_ptr++;
+            c = getch();
 
-        // Now serialize array of user ids
-        for (int i = 0; i < num_users; i++) {
-            id = htons(user_msg->ids[i]);
-            memcpy(buff_ptr, &id, 2);
-            buff_ptr += 2;
+            if ((c == KEY_BACKSPACE || c == 127 || c == '\b') && buff_len > 0) {
+                buff_len--;
+                buffer[buff_len] = 0;
+            } else if (c >= ' ' && c <= '~' && buff_len < MAX_MESSAGE_LEN - 1) {
+                buffer[buff_len] = c;
+                buff_len++;
+            } else if (c == KEY_ENTER || c == '\n') {
+                client_send_chat(SERVER_ID, buffer);
+                memset(buffer, 0, buff_len);
+                buff_len = 0;
+            }
+
+            // Draw to the screen
+            // Naively print all received messages
+            clear();
+            move(0,0);
+            for (int i = 0; i < client->num_msgs; i++) {
+                wprintw(stdscr, "%d: %s\n", client->msgs[i].header.from, client->msgs[i].msg);
+            }
+            // Print buffer
+            wprintw(stdscr, "> %s", buffer);
         }
+        endwin();
+        printf("Disconnecting from server.\n");
+        shutdown_client();
 
-        // And serialize array of user names
-        for (int i = 0; i < num_users; i++) {
-            strncat(buff_ptr, user_msg->usernames[i], MAX_USERNAME_LEN);
-            buff_ptr += strnlen(user_msg->usernames[i], MAX_USERNAME_LEN) + 1;  // Remember null byte
-        }
-        
-        // Calculate number of bytes and trim buffer down to size
-        msg_len = buff_ptr - *buffer;
-        *buffer = realloc(*buffer, msg_len);
 
-        break;
-    }
-    case MSG_CHAT: {
-        
-        // Get relevant data
-        ChatMessage* chat_msg = (ChatMessage*)msg;
 
-        // Allocate buffer memory, and create pointer to end of header data
-        *buffer = calloc(1, sizeof(ChatMessage));
-        if (*buffer == NULL) return 0;
-        char* buff_ptr = *buffer + 7;   // Leave room for header
-
-        // Serialize chat message
-        strncat(buff_ptr, chat_msg->msg, MAX_CHATMSG_LEN);
-        buff_ptr += strnlen(chat_msg->msg, MAX_CHATMSG_LEN) + 1;  // Remember null byte
-        
-        // Calculate number of bytes and trim buffer down to size
-        msg_len = buff_ptr - *buffer;
-        *buffer = realloc(*buffer, msg_len);
-
-        break;
-    }
     }
 
-    // Now fill in header information
-    uint16_t nw_len = htons(msg_len);       // Message Length
-    uint16_t nw_from = htons(msg->from);    // From
-    uint16_t nw_to = htons(msg->to);        // To
-
-    *buffer[0] = (uint8_t)msg->type;        // Type
-    memcpy(&((*buffer)[1]), &nw_len, 2);    // Length
-    memcpy(&((*buffer)[3]), &nw_from, 2);   // From
-    memcpy(&((*buffer)[5]), &nw_to, 2);     // To
-
-    return msg_len;
-}
-
-// Deserialize a message, function will malloc required memory and store in message pointer
-// Return pointer to deserialized message. Ownership passess to caller.
-MessageHeader* deserialize_msg(char* buffer, int buffer_size) {
-
-    // Allocate memory for a message header
-    MessageHeader* msg = calloc(1, sizeof(MessageHeader));
-    if (msg == NULL) return NULL;
-
-    // Deserialize the header
-    char* buff_ptr = buffer;
-    msg->type = (MessageType)buff_ptr[0];   // Type
-    buff_ptr++;
-
-    // Message Length
-    memcpy(&msg->len, buff_ptr, 2);         
-    msg->len = (uint16_t)ntohs(msg->len);   // Ensure length is host-endian
-    buff_ptr += 2;
-
-    // Message From
-    memcpy(&msg->from, buff_ptr, 2);         
-    msg->from = (uint16_t)ntohs(msg->from);   // Ensure length is host-endian
-    buff_ptr += 2;
-
-    // Message To
-    memcpy(&msg->to, buff_ptr, 2);         
-    msg->to = (uint16_t)ntohs(msg->to);   // Ensure length is host-endian
-    buff_ptr += 2;
-
-    switch (msg->type) {
-    case MSG_PING:
-        return msg;
-    case MSG_USER_SETNAME:      // Intentional fall through
-    case MSG_USER_CONNECT:      // Intentional fall through
-    case MSG_USER_DISCONNECT: {
-
-        // Reallocate enough room for this message, set to all zeroes
-        UserMessage* user_msg = (UserMessage*)realloc(msg, sizeof(UserMessage));
-        if (user_msg == NULL) return NULL;
-        memset((char*)user_msg + sizeof(MessageHeader), 0, sizeof(UserMessage) - sizeof(MessageHeader));
-
-        // Deserialize id
-        memcpy(&user_msg->id, buff_ptr, 2);
-        user_msg->id = (uint16_t)ntohs(user_msg->id);
-        buff_ptr += 2;
-        
-        // Deserialize username
-        strncat(user_msg->username, buff_ptr, MAX_USERNAME_LEN);
-        buff_ptr += strnlen(user_msg->username, MAX_USERNAME_LEN) + 1; // Remember null byte
-
-        return (MessageHeader*)user_msg;
-        
-    }
-    case MSG_ACTIVE_USERS: {
-
-        // Reallocate enough room for this message, set to all zeroes
-        ActiveUserMessage* user_msg = (ActiveUserMessage*)realloc(msg, sizeof(ActiveUserMessage));
-        if (user_msg == NULL) return NULL;
-        memset((char*)user_msg + sizeof(MessageHeader), 0, sizeof(ActiveUserMessage) - sizeof(MessageHeader));
-
-        // Deserialize number of users
-        user_msg->num_users = (uint8_t)buff_ptr[0];
-        buff_ptr++;
-
-        // Now deserialize array of user ids
-        for (int i = 0; i < user_msg->num_users; i++) {
-            memcpy(&(user_msg->ids[i]), buff_ptr, 2);
-            user_msg->ids[i] = (uint16_t)ntohs(user_msg->ids[i]);
-            buff_ptr += 2;
-        }
-
-        // And serialize array of user names
-        for (int i = 0; i < user_msg->num_users; i++) {
-            strncat(user_msg->usernames[i], buff_ptr, MAX_USERNAME_LEN);
-            buff_ptr += strnlen(user_msg->usernames[i], MAX_USERNAME_LEN) + 1;  // Remember null byte
-        }
-
-        return (MessageHeader*)user_msg;
-    }
-    case MSG_CHAT: {
     
-        // Reallocate enough room for this message, set to all zeroes
-        ChatMessage* chat_msg = (ChatMessage*)realloc(msg, sizeof(ChatMessage));
-        if (chat_msg == NULL) return NULL;
-         memset((char*)chat_msg + sizeof(MessageHeader), 0, sizeof(ChatMessage) - sizeof(MessageHeader));
-            
-        // Deserialize string
-        strncat(chat_msg->msg, buff_ptr, MAX_CHATMSG_LEN);
-        buff_ptr += strnlen(chat_msg->msg, MAX_CHATMSG_LEN) + 1; // Remember null byte
-    
-        return (MessageHeader*)chat_msg;
-    }
-    }
-
-    return 0;
 }
+        /*
+        // Throwaway first data
+        fgets(buffer, MAX_MESSAGE_LEN, stdin);
+        do {
 
-// Start chat server, and run until disconnected
-int start_chat_server(char* port);    
+            // Check for any messages
+            client_check_messages(1000);
 
-// Run chat server, poll for requests, and forward messages                  
-int chat_server_run(void);               
 
-// Send set name request to all users               
-int server_send_user_setname(uint16_t id, char* name);
 
-// Send user connect message to all users  
-int server_send_user_connect(uint16_t id);        
+            if (buffer[0] =='\n') {
 
-// Send user disconnect message to all users      
-int server_send_user_disconnect(uint16_t id);   
+            } else if (strncmp(buffer, "setname ", 7) == 0) {
+                client_req_user_setname(&buffer[8]);
+            } else if (strncmp(buffer, "ping\n", 5) == 0) {
+                client_ping_server();
+            } else if (strncmp(buffer, "getusers\n", 9) == 0) {
+                client_req_active_users();
+            } else if (buffer[0] == '>') {
+                client_req_active_users();
+            } else {
+                client_send_chat(0, buffer);
+            }
 
-// Send list of all active users to all users        
-int server_send_active_users(void);        
+        } while (fgets(buffer, MAX_MESSAGE_LEN, stdin));
+        */
 
-// Ping a client             
-int server_ping(uint16_t id);                                  
-
-// Start chat client
-int start_chat_client(char* host, char* port);  
-
-// Read message, and update chat room state        
-int client_read_message(MessageHeader* msg);     
-
-// Send request to server to set client name      
-int client_req_user_setname(char* username);
-
-// Request all active users from server
-int client_req_active_users(void);         
-
-// Ping Server             
-int client_ping(void);                  
-
-// Send message to entire chat                
-int client_send_all(ChatMessage* msg);                  

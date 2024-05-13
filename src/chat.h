@@ -5,7 +5,9 @@
 #include "sock.h"
 
 #define MAX_USERNAME_LEN (16)
+#define MAX_CHAT_HISTORY (255)
 #define MAX_CHATMSG_LEN  (255)
+#define SERVER_ID (0)
 
 typedef enum MessageType {
     MSG_PING,
@@ -23,7 +25,9 @@ typedef struct MessageHeader {
     uint16_t to;                        // Message Destination
 } MessageHeader;
 
-typedef MessageHeader PingMessage;
+typedef struct PingMessage {
+    MessageHeader header;
+} PingMessage;
 
 typedef struct UserMessage {
     MessageHeader header;
@@ -54,33 +58,47 @@ typedef struct User {
     char name[MAX_USERNAME_LEN + 1];
 } User;
 
-typedef struct ChatRoom {
+typedef struct ChatServer {
     int num_users;
     User users[MAX_CLIENTS];
-    ChatMessage* messages;
-} ChatRoom;
+    SockState* socket_connection;
+} ChatServer;
+
+typedef struct ChatClient {
+    uint16_t id;
+    char name[MAX_USERNAME_LEN + 1];
+    int num_users;
+    User users[MAX_CLIENTS];
+    ChatMessage msgs[MAX_CHAT_HISTORY];
+    int num_msgs;
+} ChatClient;
+
 
 // General utilities
-size_t serialize_msg(MessageHeader* msg, char** buffer);        // Serialize message, typecast message into header, function will malloc required memory
-MessageHeader* deserialize_msg(char* buffer, int buffer_size);   // Deserialize a message, function will malloc required memory
+int serialize_msg(MessageHeader* msg, char** buffer);           // Serialize message, typecast message into header, function will malloc required memory
+MessageHeader* deserialize_msg(char* buffer, int num_bytes);    // Deserialize a message, function will malloc required memory
 
 // Server utilties
+ChatClient* get_client(void);                           // Get pointer to chat client struct
 int start_chat_server(char* port);                      // Start chat server, and run until disconnected
 int chat_server_run(void);                              // Run chat server, poll for requests, and forward messages
+int server_handle_packet(Packet* packet);               // Handle packet from clients
+int server_sync_users(void);                            // Sync users between socket connection and server
+int server_send_message(MessageHeader* msg);            // Send message based to client addressed in message header
 int server_send_user_setname(uint16_t id, char* name);  // Send set name request to all users
 int server_send_user_connect(uint16_t id);              // Send user connect message to all users
 int server_send_user_disconnect(uint16_t id);           // Send user disconnect message to all users
-int server_send_active_users(void);                     // Send list of all active users to all users
-int server_ping(uint16_t id);                           // Ping a client
+int server_send_active_users(uint16_t to);              // Send list of all active users to id
 
-// Chat Room Utilties
+// Chat Client Utilties
 int start_chat_client(char* host, char* port);          // Start chat client
-int client_read_message(MessageHeader* msg);            // Read message, and update chat room state
+int client_check_messages(int timeout);                 // Poll and handle new messages
+int client_update_active_users(ActiveUserMessage* msg); // Update client list of active users with results of message
+int client_handle_packet(Packet* packet);               // Handle packet, and update chat room state
+int client_send_message(MessageHeader* msg);            // Send a message to the server
 int client_req_user_setname(char* username);            // Send request to server to set client name
 int client_req_active_users(void);                      // Request all active users from server
-int client_ping(void);                                  // Ping Server
-int client_send_all(ChatMessage* msg);                  // Send message to entire chat
-
-// Future functionality -> send direct message
+int client_ping_server(void);                           // Ping Server
+int client_send_chat(uint16_t to, char* msg);           // Send message to entire chat, expects null terminated string
 
 #endif // CHAT_H

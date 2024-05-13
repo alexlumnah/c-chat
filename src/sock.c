@@ -12,40 +12,40 @@
 
 #include "sock.h"
 
-#define PRINT_ERROR(msg) (fprintf(stderr, "[ERROR] %s Exit with error: %s\n", msg, strerror(errno)))
-#define PRINT_ERROR2(msg1, msg2) (fprintf(stderr, "[ERROR] %s %s\n", msg1, msg2))
-#define DEBUG_PRINT(msg) (printf("[DEBUG] %s\n", msg))
-#define DEBUG_PRINT2(msg1, msg2) (printf("[DEBUG] %s %s\n", msg1, msg2))
-#define DEBUG_PRINT3(msg1, val) (printf("[DEBUG] %s %d\n", msg1, val))
+#define PRINT_ERROR(packet) (fprintf(stderr, "[ERROR] %s Exit with error: %s\n", packet, strerror(errno)))
+#define PRINT_ERROR2(packet1, packet2) (fprintf(stderr, "[ERROR] %s %s\n", packet1, packet2))
+#define DEBUG_PRINT(packet) (printf("[DEBUG] %s\n", packet))
+#define DEBUG_PRINT2(packet1, packet2) (printf("[DEBUG] %s %s\n", packet1, packet2))
+#define DEBUG_PRINT3(packet1, val) (printf("[DEBUG] %s %d\n", packet1, val))
 
 static SockState connection;
 
-SockState* get_state(void) {
+SockState* sock_get_state(void) {
 
     return &connection;
 }
 
-// Return number of messages in queue
-int num_msgs(void) {
+// Return number of packets in queue
+int num_packets(void) {
     
-    int num_msgs = 0;
+    int num_packets = 0;
 
-    Message* q_ptr = connection.msg_queue;
+    Packet* q_ptr = connection.packet_queue;
     while (q_ptr != NULL) {
-        num_msgs++;
-        q_ptr = q_ptr->next_msg;
+        num_packets++;
+        q_ptr = q_ptr->next_packet;
     }
 
-    return num_msgs;
+    return num_packets;
 }
 
-// Pop message at top of message queue and return pointer. Ownership passes to caller.
-Message* pop_msg(void) {
+// Pop packet at top of packet queue and return pointer. Ownership passes to caller.
+Packet* pop_packet(void) {
 
-    Message* q_ptr = connection.msg_queue;
+    Packet* q_ptr = connection.packet_queue;
     if (q_ptr != NULL) {
-        connection.msg_queue = connection.msg_queue->next_msg;
-        q_ptr->next_msg = NULL;
+        connection.packet_queue = connection.packet_queue->next_packet;
+        q_ptr->next_packet = NULL;
     }
 
     return q_ptr;
@@ -53,7 +53,7 @@ Message* pop_msg(void) {
 
 
 // Send data to a socket
-int send_msg(int socket_fd, char* data, size_t num_bytes) {
+int send_packet(int socket_fd, char* data, size_t num_bytes) {
 
     int bytes_sent;
     uint16_t nw_len;
@@ -62,10 +62,10 @@ int send_msg(int socket_fd, char* data, size_t num_bytes) {
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     if (num_bytes > MAX_MESSAGE_LEN) return SOCK_ERR_INVALID_MSG_LENGTH;
 
-    // Convert message to string of bytes in network order
+    // Convert packet to string of bytes in network order
     nw_len = htons((uint16_t)num_bytes);
     memcpy(&buffer, &nw_len, 2);
-    strncpy(&buffer[2], data, num_bytes);
+    memcpy(&buffer[2], data, num_bytes);
 
     bytes_sent = send(socket_fd, &buffer, num_bytes + sizeof(nw_len), 0);
 
@@ -74,74 +74,74 @@ int send_msg(int socket_fd, char* data, size_t num_bytes) {
     return SOCK_SUCCESS;
 }
 
-// Receive and unpack a message, store in message queue
+// Receive and unpack a packet, store in packet queue
 // Allocates memory for storage, hands ownership to queue owner
-int recv_msg(int socket_fd) {
+int recv_packet(int socket_fd) {
 
     ssize_t num_bytes;
     char buffer[MAX_MESSAGE_LEN] = {0};
-    uint16_t msg_len = 0;
+    uint16_t packet_len = 0;
 
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
 
-    // First check message length
-    num_bytes = recv(socket_fd, &msg_len, sizeof(msg_len), 0);
+    // First check packet length
+    num_bytes = recv(socket_fd, &packet_len, sizeof(packet_len), 0);
 
     if (num_bytes == -1) {
-        DEBUG_PRINT("No message read.");
+        DEBUG_PRINT("No packet read.");
         return SOCK_ERR_NO_DATA;
     } else if (num_bytes == 0) {
         DEBUG_PRINT("Socket disconnected.");
         return SOCK_ERR_SOCKET_DISCONNECT;
     } else if (num_bytes != 2) {
-        DEBUG_PRINT("Invalid message format.");
+        DEBUG_PRINT("Invalid packet format.");
         return SOCK_ERR_INVALID_MSG_FORMAT;
     }
 
     // Convert to host endianness
-    msg_len = ntohs(msg_len);
+    packet_len = ntohs(packet_len);
 
-    DEBUG_PRINT3("Message length:",msg_len);
+    DEBUG_PRINT3("Packet length:",packet_len);
 
-    if (msg_len > MAX_MESSAGE_LEN) {
-        DEBUG_PRINT("Invalid message length.");
+    if (packet_len > MAX_MESSAGE_LEN) {
+        DEBUG_PRINT("Invalid packet length.");
         return SOCK_ERR_INVALID_MSG_LENGTH;
     }
 
-    // Attempt to receive rest of message
-    num_bytes = recv(socket_fd, &buffer, msg_len, 0);
+    // Attempt to receive rest of packet
+    num_bytes = recv(socket_fd, &buffer, packet_len, 0);
 
     // TODO - ADD CAPABILITY FOR NOT GETTING ENTIRE MESSAGE
     if (num_bytes == 0) {
         return SOCK_ERR_SOCKET_DISCONNECT;
-    } else if (num_bytes != msg_len) {
-        DEBUG_PRINT("Did not receive entire message.");
+    } else if (num_bytes != packet_len) {
+        DEBUG_PRINT("Did not receive entire packet.");
         return SOCK_ERR_INVALID_MSG_LENGTH;
     }
 
-    DEBUG_PRINT2("Message:", buffer);
+    DEBUG_PRINT2("Packet:", buffer);
 
-    // Now construct message
-    Message *msg = calloc(1, sizeof(Message));
-    msg->len = msg_len;
-    strncpy(msg->data, buffer, msg_len);
+    // Now construct packet
+    Packet *packet = calloc(1, sizeof(Packet));
+    packet->len = packet_len;
+    memcpy(packet->data, buffer, packet_len);
 
     // Populate sender field
     if (connection.type == SOCK_SERVER) {
-        msg->sender = fd_to_id(socket_fd);
+        packet->sender = fd_to_id(socket_fd);
     } else {
-        msg->sender = 0;    // ID 0 is reserved for server
+        packet->sender = 0;    // ID 0 is reserved for server
     }
 
-    // Find end of message queue, and add message to end
-    if (connection.msg_queue == NULL) {
-        connection.msg_queue = msg;
+    // Find end of packet queue, and add packet to end
+    if (connection.packet_queue == NULL) {
+        connection.packet_queue = packet;
     } else {
-        Message* queue_end = connection.msg_queue;
-        while (queue_end->next_msg != NULL) {
-            queue_end = queue_end->next_msg;
+        Packet* queue_end = connection.packet_queue;
+        while (queue_end->next_packet != NULL) {
+            queue_end = queue_end->next_packet;
         }
-        queue_end->next_msg = msg;
+        queue_end->next_packet = packet;
     }
 
     return SOCK_SUCCESS;
@@ -169,7 +169,15 @@ int fd_to_id(int fd) {
     }
 
     return -1;  
-}                                    
+}              
+
+// Dump contents of a data buffer
+void dump_data(char* data, int num_bytes) {
+    for (int i = 0; i < num_bytes; i++) {
+        printf("%.02x ", (unsigned char)data[i]);
+    }
+    printf("\n");
+}                  
 
 // Start a server on the local host at specified port
 int start_server(char* port) {
@@ -231,12 +239,15 @@ int start_server(char* port) {
         return SOCK_ERR_SERVER_START_FAILURE;
     }
 
-    // Update type, and save socked fd
+    // Update type, and save socket fd
     connection.type = SOCK_SERVER;
     connection.socket = socket_fd;
 
-    // Setup our message queue
-    connection.msg_queue = NULL;
+    // Update default id #
+    connection.next_id = 1000;
+
+    // Setup our packet queue
+    connection.packet_queue = NULL;
 
     return SOCK_SUCCESS;
 }
@@ -269,7 +280,7 @@ int accept_client(void) {
     connection.num_clients++;
     connection.next_id++;
 
-    printf("[Connecting client id: %d on socket: %d]\n", connection.clients[connection.num_clients].id, client_socket);
+    printf("[Connecting client id: %d on socket: %d]\n", connection.clients[connection.num_clients-1].id, client_socket);
 
     return SOCK_SUCCESS;
 }
@@ -301,22 +312,17 @@ int disconnect_client(uint16_t client_id) {
     return SOCK_ERR_CLIENT_NOT_FOUND;
 }
 
-// Remove inactive client from list of clients
-int flush_inactive_client(uint16_t client_id) {
+// Remove inactive clients from list of clients
+int flush_inactive_clients(void) {
 
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
     // Remove from client and fd list by overwriting entry with final entry
-    for (int i = 1; i < connection.num_clients; i++) {
-        if (client_id == connection.clients[i].id) {
+    for (int i = connection.num_clients - 1; i >= 0; i--) {
+        if (connection.clients[i].active == INACTIVE) {
 
-            if (connection.clients[i].active != INACTIVE) {
-                PRINT_ERROR("Attempted to flush active client.");
-                return SOCK_ERR_CLIENT_STILL_ACTIVE;
-            }
-
-            printf("[Removing inactive client: %d]\n", client_id);
+            DEBUG_PRINT3("Flushing inactive client:", connection.clients[i].id);
 
             // Overwrite entry with data from last entry
             connection.clients[i] = connection.clients[connection.num_clients - 1];
@@ -326,24 +332,24 @@ int flush_inactive_client(uint16_t client_id) {
 
             // Decrement number of clients
             connection.num_clients--;
-
-            return SOCK_SUCCESS;
+            
         }
+        
     }
 
-    return SOCK_ERR_CLIENT_NOT_FOUND;
+    return SOCK_SUCCESS;
 }
 
-// Send message to client
-int server_send_msg(uint16_t client_id, char* data, size_t num_bytes) {
+// Send packet to client
+int server_send_packet(uint16_t client_id, char* data, size_t num_bytes) {
 
-    return send_msg(id_to_fd(client_id), data, num_bytes);
+    return send_packet(id_to_fd(client_id), data, num_bytes);
 }
 
-// Receive message from client
-int server_recv_msg(uint16_t client_id) {
+// Receive packet from client
+int server_recv_packet(uint16_t client_id) {
 
-    return recv_msg(id_to_fd(client_id));
+    return recv_packet(id_to_fd(client_id));
 }
 
 // Shutdown server and all client connections
@@ -364,8 +370,8 @@ int shutdown_server(void) {
     return SOCK_SUCCESS;
 }
 
-// Poll connection for connections or messages
-// Accept any new connections, and add new messages to queue
+// Poll connection for connections or packets
+// Accept any new connections, and add new packets to queue
 int poll_sockets(int timeout) {
 
     // Poll for any activity
@@ -390,6 +396,13 @@ int poll_sockets(int timeout) {
         }
     }
 
+    // Also poll stdin if this is a client
+    if (connection.type == SOCK_CLIENT) {
+        active_fds[num_active].fd = 0;  // stdin file descriptor
+        active_fds[num_active].events = POLLIN;
+        num_active++;
+    }
+
     num_events = poll(active_fds, num_active, timeout);
 
     if (num_events < 0) return SOCK_ERR_POLL_FAILURE;
@@ -406,21 +419,21 @@ int poll_sockets(int timeout) {
             }
         }
 
-        // Now check remaining ports for messages
+        // Now check remaining ports for packets
         for (int i = 1; i < num_active; i++) {
             if (active_fds[i].revents & POLLIN) {
-                DEBUG_PRINT("Polled new message");
-                status = recv_msg(active_fds[i].fd);
+                DEBUG_PRINT("Polled new packet");
+                status = recv_packet(active_fds[i].fd);
                 if (status == SOCK_ERR_SOCKET_DISCONNECT) {
                     disconnect_client(active_ids[i]);
                 }
             }
         }
     } else if (connection.type == SOCK_CLIENT) {
-        // Check if our client socket has any messages
+        // Check if our client socket has any packets
         if (active_fds[0].revents & POLLIN) {
-            DEBUG_PRINT("Polled new message");
-            status = recv_msg(active_fds[0].fd);
+            DEBUG_PRINT("Polled new packet");
+            status = recv_packet(active_fds[0].fd);
             if (status == SOCK_ERR_SOCKET_DISCONNECT) {
                 DEBUG_PRINT("Server disconnected.");
                 shutdown_client();
@@ -480,18 +493,18 @@ int start_client(char* host, char* port) {
     connection.type = SOCK_CLIENT;
     connection.socket = socket_fd;
 
-    // Setup our message queue
-    connection.msg_queue = NULL;
+    // Setup our packet queue
+    connection.packet_queue = NULL;
 
     return SOCK_SUCCESS;
 }
 
-// Send message from client to server
-int client_send_msg(char* data, size_t num_bytes) {
+// Send packet from client to server
+int client_send_packet(char* data, size_t num_bytes) {
 
     if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
-    return send_msg(connection.socket, data, num_bytes);
+    return send_packet(connection.socket, data, num_bytes);
 }
 
 // Shutdown client

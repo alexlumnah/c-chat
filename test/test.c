@@ -17,28 +17,28 @@ bool serial_deserial_ping_msg_test(bool verbose) {
 
     // Create message
     PingMessage msg = {0};
-    msg.type = MSG_PING;
-    msg.from = 0;
-    msg.to = 65535;
+    msg.header.type = MSG_PING;
+    msg.header.from = 0;
+    msg.header.to = 65535;
 
     size_t num_bytes;
     char* buffer;
 
-    num_bytes = serialize_msg(&msg, &buffer);
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
 
-    msg.len = num_bytes; // Message length is calculated and packed by the serialization function
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
 
     PingMessage* out;
 
-    out = deserialize_msg(buffer, num_bytes);
+    out = (PingMessage*)deserialize_msg(buffer, num_bytes);
 
     if (verbose) {
         printf("--------------------------------\n");
         print_buffer(buffer, num_bytes);
-        printf("Message Len Before: %d After: %d\n", msg.len, out->len);
-        printf("Message Type Before: %d After: %d\n", msg.type, out->type);
-        printf("Message From Before: %d After: %d\n", msg.from, out->from);
-        printf("Message To Before: %d After: %d\n", msg.to, out->to);
+        printf("Message Len Before: %d After: %d\n", msg.header.len, out->header.len);
+        printf("Message Type Before: %d After: %d\n", msg.header.type, out->header.type);
+        printf("Message From Before: %d After: %d\n", msg.header.from, out->header.from);
+        printf("Message To Before: %d After: %d\n", msg.header.to, out->header.to);
     }
 
     bool match = memcmp(&msg, out, sizeof(PingMessage)) == 0;
@@ -137,6 +137,7 @@ bool serial_deserial_active_msg_test(bool verbose, int num_users) {
 
     return match;
 }
+
 bool serial_deserial_chat_msg_test(bool verbose, char* message) {
 
     // Create message
@@ -175,6 +176,192 @@ bool serial_deserial_chat_msg_test(bool verbose, char* message) {
     return match;
 }
 
+bool corrupt_serial_user_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    UserMessage msg = {0};
+    msg.header.type = MSG_USER_SETNAME;
+    msg.header.from = 777;
+    msg.header.to = 80;
+
+    // Overwrite all data except message type
+    memset((char*)(&msg) + 1,'a',sizeof(UserMessage) - 1);
+
+    int num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    if (num_bytes == -1) return true;
+
+    return false;
+
+}
+
+bool corrupt_serial_active_user_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ActiveUserMessage msg = {0};
+    msg.header.type = MSG_ACTIVE_USERS;
+    msg.header.from = 777;
+    msg.header.to = 80;
+
+    // Overwrite all data except message type
+    memset((char*)(&msg) + 1,'a',sizeof(ActiveUserMessage) - 1);
+
+    int num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    if (num_bytes == -1) return true;
+
+    return false;
+
+}
+
+
+bool corrupt_serial_chat_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ChatMessage msg = {0};
+    msg.header.type = MSG_CHAT;
+    msg.header.from = 999;
+    msg.header.to = 23;
+
+    // Overwrite null byte in string to confirm we don't overflow
+    memset(msg.msg,'a',MAX_CHATMSG_LEN + 1);
+
+    int num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    if (num_bytes == -1) return true;
+
+    return false;
+
+}
+
+bool corrupt_deserial_user_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    UserMessage msg = {0};
+    msg.header.type = MSG_USER_SETNAME;
+    msg.header.from = 10;
+    msg.header.to = 0;
+    msg.id = 10;
+    strncpy(msg.username, "Username12345678", MAX_USERNAME_LEN);
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    // Overwrite null byte of username
+    buffer[num_bytes - 1] = 'a';
+
+    UserMessage* out;
+
+    out = (UserMessage*)deserialize_msg(buffer, num_bytes);
+
+    free(buffer);
+
+    // Confirm deserialization fails gracefully
+    if (out == NULL) {
+        return true;
+    } else {
+        free(out);
+        return false;
+    }
+
+}
+
+bool corrupt_deserial_active_user_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ActiveUserMessage msg = {0};
+    msg.header.type = MSG_ACTIVE_USERS;
+    msg.header.from = 777;
+    msg.header.to = 80;
+
+    msg.num_users = 10;
+
+    for (int i = 0; i < msg.num_users; i++) {
+        msg.ids[i] = i + 10000;
+        strncpy(msg.usernames[i],"Abcdefghijklmnopqrstuvwxyz",(i < MAX_USERNAME_LEN ? i : MAX_USERNAME_LEN));
+    }
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    // Overwrite last null byte
+    buffer[num_bytes - 1] = 'a';
+
+    ActiveUserMessage* out;
+
+    out = (ActiveUserMessage*)deserialize_msg(buffer, num_bytes);
+
+    free(buffer);
+
+    // Confirm deserialization fails gracefully
+    if (out == NULL) {
+        return true;
+    } else {
+        free(out);
+        return false;
+    }
+}
+
+bool corrupt_deserial_chat_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ChatMessage msg = {0};
+    msg.header.type = MSG_CHAT;
+    msg.header.from = 999;
+    msg.header.to = 23;
+    strncpy(msg.msg, "Testing 123", MAX_CHATMSG_LEN);
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    // Overwrite last null byte
+    buffer[num_bytes - 1] = 'a';
+
+    ChatMessage* out;
+
+    out = (ChatMessage*)deserialize_msg(buffer, num_bytes);
+
+    // Confirm deserialization fails gracefully
+    if (out == NULL) {
+        return true;
+    } else {
+        free(out);
+        return false;
+    }
+}
 
 
 
@@ -206,4 +393,11 @@ int main(int argc, char* argv[]) {
     printf("ChatMessage Test 1: %s\n", serial_deserial_chat_msg_test(verbose, "Test Message 1") ? "PASS" : "FAIL");
     printf("ChatMessage Test 2: %s\n", serial_deserial_chat_msg_test(verbose, "") ? "PASS" : "FAIL");
     printf("ChatMessage Test 3: %s\n", serial_deserial_chat_msg_test(verbose, "A very long message that exceeds the maximum message length. This message needs to exceed the 256 character limit, so it will go on and on and on and on and on and on and on and on. Its still not quite long enough though, so it will keep going on and on and on.") ? "PASS" : "FAIL");
+    printf("Corrupt Message Serialization 1: %s\n", corrupt_serial_user_msg_test(verbose) ? "PASS" : "FAIL");  
+    printf("Corrupt Message Serialization 2: %s\n", corrupt_serial_active_user_msg_test(verbose) ? "PASS" : "FAIL");    
+    printf("Corrupt Message Serialization 3: %s\n", corrupt_serial_chat_msg_test(verbose) ? "PASS" : "FAIL");
+    printf("Corrupt Message Deserialization 1: %s\n", corrupt_deserial_user_msg_test(verbose) ? "PASS" : "FAIL");  
+    printf("Corrupt Message Deserialization 2: %s\n", corrupt_deserial_active_user_msg_test(verbose) ? "PASS" : "FAIL");    
+    printf("Corrupt Message Deserialization 3: %s\n", corrupt_deserial_chat_msg_test(verbose) ? "PASS" : "FAIL");
+
 }

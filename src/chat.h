@@ -5,7 +5,6 @@
 #include "sock.h"
 
 #define MAX_USERNAME_LEN (16)
-#define MAX_CHAT_HISTORY (255)
 #define MAX_CHATMSG_LEN  (255)
 #define SERVER_ID (0)
 
@@ -65,12 +64,10 @@ typedef struct ChatServer {
 } ChatServer;
 
 typedef struct ChatClient {
-    uint16_t id;
-    char name[MAX_USERNAME_LEN + 1];
-    int num_users;
-    User users[MAX_CLIENTS];
-    ChatMessage msgs[MAX_CHAT_HISTORY];
-    int num_msgs;
+    uint16_t id;                                    // id of this client
+    char name[MAX_USERNAME_LEN + 1];                // Username of this client
+    int num_users;                                  // Number of users in chat room
+    User users[MAX_CLIENTS];                        // List of users in chat room
 } ChatClient;
 
 
@@ -92,6 +89,8 @@ int server_send_active_users(uint16_t to);              // Send list of all acti
 
 // Chat Client Utilties
 int start_chat_client(char* host, char* port);          // Start chat client
+void client_run(void);                                  // Start main chat client loop
+void end_chat_client(void);                              // End chat client
 int client_check_messages(int timeout);                 // Poll and handle new messages
 int client_update_active_users(ActiveUserMessage* msg); // Update client list of active users with results of message
 int client_handle_packet(Packet* packet);               // Handle packet, and update chat room state
@@ -100,5 +99,12 @@ int client_req_user_setname(char* username);            // Send request to serve
 int client_req_active_users(void);                      // Request all active users from server
 int client_ping_server(void);                           // Ping Server
 int client_send_chat(uint16_t to, char* msg);           // Send message to entire chat, expects null terminated string
+
+// UI Utilities
+void init_window(void);
+void kill_window(void);
+void update_user_display(User* users, int num_users);
+void printf_message(const char* fmt, ...);
+void draw_screen(char* buffer);
 
 #endif // CHAT_H

@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/poll.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 #include <errno.h>
 #include <sys/fcntl.h>
@@ -188,7 +189,7 @@ int start_server(char* port) {
     int socket_fd;          // Variable for storing socket file descriptor
 
     struct addrinfo hints = {0}; // Struct to pass inputs to getaddrinfo
-    struct addrinfo *addr;       // Struct to get results from getaddrinfo
+    struct addrinfo *addr, *addr0;       // Struct to get results from getaddrinfo
 
     // If already initialized, return error
     if (connection.type != SOCK_UNINITIALIZED) return SOCK_ERR_ALREADY_INITIALIZED;
@@ -197,16 +198,39 @@ int start_server(char* port) {
     hints.ai_socktype = SOCK_STREAM;    // TCP Stream Socket
     hints.ai_flags = AI_PASSIVE;        // Fill in IP
 
-    status = getaddrinfo(NULL, port, &hints, &addr);
-    if (status != 0) {
+    status = getaddrinfo(NULL, port, &hints, &addr0);
+    if (status != 0 || addr0 == NULL) {
         PRINT_ERROR2("Unable to get address.", gai_strerror(status));
         return SOCK_ERR_SERVER_START_FAILURE;
     }
 
-    // Open a streaming socket
-    socket_fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+    // Bind to first address we can
+    for (addr = addr0; addr != NULL; addr = addr->ai_next) {
+
+        // Open a streaming socket
+        socket_fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+        if (socket_fd == -1) {
+            continue;
+        }
+
+        // Bind socket to our ip and port
+        status = bind(socket_fd, addr->ai_addr, addr->ai_addrlen);
+        if (status != 0) {
+            close(socket_fd);
+            socket_fd = -1;
+            continue;
+        }
+
+        // If we succeed in binding to socket, exit loop
+        break;
+    }
+
+    // Free memory allocated for addresses
+    freeaddrinfo(addr0);
+
+    // If unable to bind, exit with failure
     if (socket_fd == -1) {
-        PRINT_ERROR("Unable to open socket.");
+        PRINT_ERROR("Unable to bind to socket.");
         return SOCK_ERR_SERVER_START_FAILURE;
     }
 
@@ -225,14 +249,7 @@ int start_server(char* port) {
         return SOCK_ERR_SERVER_START_FAILURE;
     }
 
-    // Bind socket to our ip and port
-    status = bind(socket_fd, addr->ai_addr, addr->ai_addrlen);
-    if (status != 0) {
-        PRINT_ERROR("Unable to bind to port.");
-        return SOCK_ERR_SERVER_START_FAILURE;
-    }
-
-    // Begin listening for connections on socket, with maxium backlog of 10
+    // Begin listening for connections on socket, with maximum backlog of 10
     status = listen(socket_fd, 10);
     if (status != 0) {
         PRINT_ERROR("Unable to listen on socket.");
@@ -452,8 +469,8 @@ int start_client(char* host, char* port) {
     int status;             // Variable for storing function return status
     int socket_fd;           // Variable for storing socket file descriptor
 
-    struct addrinfo hints = {0}; // Struct to pass inputs to getaddrinfo
-    struct addrinfo *addr;       // Struct to get results from getaddrinfo
+    struct addrinfo hints = {0};    // Struct to pass inputs to getaddrinfo
+    struct addrinfo *addr, *addr0;  // Structs to get results from getaddrinfo
 
     // If already initialized, return error
     if (connection.type != SOCK_UNINITIALIZED) return SOCK_ERR_ALREADY_INITIALIZED;
@@ -462,22 +479,37 @@ int start_client(char* host, char* port) {
     hints.ai_socktype = SOCK_STREAM;    // TCP Stream Socket
     hints.ai_flags = AI_PASSIVE;        // Fill in IP
 
-    status = getaddrinfo(host, port, &hints, &addr);
-    if (status != 0) {
+    status = getaddrinfo(host, port, &hints, &addr0);
+    if (status != 0 || addr0 == NULL) {
         PRINT_ERROR2("Unable to get address.", gai_strerror(status));
         return SOCK_ERR_CLIENT_START_FAILURE;
     }
 
-    // Open a streaming socket
-    socket_fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
-    if (socket_fd == -1) {
-        PRINT_ERROR("Unable to open socket.");
-        return SOCK_ERR_CLIENT_START_FAILURE;
+    // Connect to first address that works
+    for (addr = addr0; addr != NULL; addr = addr->ai_next) {
+
+        // Attempt to open streaming socket
+        socket_fd = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+        if (socket_fd == -1) {
+            continue;
+        }
+
+        // Attempt to connect to socket
+        status = connect(socket_fd, addr->ai_addr, addr->ai_addrlen);
+        if (status == -1) {
+            close(socket_fd);
+            socket_fd = -1;
+            continue;
+        }
+
+        // If we connect successfully, leave loop
+        break;
     }
 
-    // Connect to our socket
-    status = connect(socket_fd, addr->ai_addr, addr->ai_addrlen);
-    if (status == -1) {
+    // Free memory allocated for addresses
+    freeaddrinfo(addr0);
+
+    if (socket_fd == -1) {
         PRINT_ERROR("Unable to connect to socket.");
         return SOCK_ERR_CLIENT_START_FAILURE;
     }

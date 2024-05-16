@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
+#include <curses.h>
 
 #include "sock.h"
 #include "chat.h"
@@ -23,7 +24,7 @@ int start_chat_client(char* host, char* port) {
 
     if (status != SOCK_SUCCESS) return -1;
     
-    printf("Client started. Listening for server reply.\n");
+    printf("Client started. Listening for server greeting...\n");
 
     // 10 second timeout
     status = poll_sockets(10000);
@@ -56,6 +57,94 @@ int start_chat_client(char* host, char* port) {
     free(packet);
 
     return 1;
+}
+
+void interpret_input(char* buffer, int buff_len) {
+
+    // If not a command, send message
+    if (buffer[0] != '/') {
+        client_send_chat(SERVER_ID, buffer);
+        return;
+    }
+    
+    // Otherwise parse command
+    if (strncmp(&buffer[1], "ping", 4) == 0) {
+        client_ping_server();
+    } else if (strncmp(&buffer[1], "setname ", 8) == 0) {
+
+        // Check length of username
+        if (buff_len - 9 > MAX_USERNAME_LEN) {
+            printf_message("Error: Desired username is too long.");
+            return;
+        }
+
+        client_req_user_setname(&buffer[9]);
+    } 
+}
+
+void client_run(void) {
+
+    int c;
+    int buff_len = 0;
+    char buffer[MAX_MESSAGE_LEN] = {0};
+
+    // Initialize UI
+    init_window();
+
+    // Add users to UI
+    update_user_display(client.users, client.num_users);
+
+    // Core loop - listen for inputs and messages
+    do {
+
+        // Poll for messages
+        client_check_messages(1000);
+
+        // Get input
+        while ((c = getch()) != ERR){
+
+            // Store any ascii characters in buffer
+            if (c >= ' ' && c <= '~' && buff_len < MAX_MESSAGE_LEN - 1) {
+                buffer[buff_len] = c;
+                buff_len++;
+
+            // Handle backspaces
+            } else if ((c == KEY_BACKSPACE || c == 127 || c == '\b') && buff_len > 0) {
+                buff_len--;
+                buffer[buff_len] = 0;
+
+            // Interpret input when Enter or Return is pressed
+            } else if (c == KEY_ENTER || c == '\n') {
+                interpret_input(buffer, buff_len);
+                memset(buffer, 0, buff_len);
+                buff_len = 0;
+
+            // Reset UI when terminal is resized
+            } else if (c == KEY_RESIZE) {
+                update_user_display(client.users, client.num_users);
+
+            // Break out of loop when ESC key is detected
+            } else if (c == 27) {
+                break;
+            }
+
+        } 
+
+        // Update screen
+        draw_screen(buffer);
+
+    } while (c != 27);
+
+}
+
+void end_chat_client(void) {
+
+    // Kill UI
+    kill_window();
+
+    // Shutdown socket
+    shutdown_client();
+
 }
 
 // Check for message from socket
@@ -108,9 +197,8 @@ int client_update_active_users(ActiveUserMessage* msg) {
         if (!check_user_exists(msg->ids[i])) {
             client.users[client.num_users].id = msg->ids[i];
             client.users[client.num_users].active = USER_ACTIVE;
-            strncat(client.users[client.num_users].name, msg->usernames[i], MAX_USERNAME_LEN);
+            strncpy(client.users[client.num_users].name, msg->usernames[i], MAX_USERNAME_LEN);
             client.num_users++;
-            printf("[DEBUG] Adding user %d with username: %s\n",msg->ids[i],msg->usernames[i]);
         }
     }
 
@@ -135,7 +223,6 @@ int client_update_active_users(ActiveUserMessage* msg) {
     return 1;
 }
 
-
 // Read message, and update chat room state        
 int client_handle_packet(Packet* packet) {
 
@@ -143,7 +230,7 @@ int client_handle_packet(Packet* packet) {
 
     switch (msg->type) {
     case MSG_PING:
-        printf("PING!");
+        printf_message("<PING!>");
         break;
     case MSG_USER_SETNAME: {
 
@@ -151,13 +238,14 @@ int client_handle_packet(Packet* packet) {
         int user_index = get_user_index(user_msg->id);
 
         if (user_index == -1) {
-            printf("[ERROR] User id %d doesn't exist.",user_msg->id);
+            printf_message("[ERROR] User id %d doesn't exist.",user_msg->id);
             free(msg);
             return -1;
         }
 
-        strncat(client.users[user_index].name, user_msg->username, MAX_USERNAME_LEN);
-        printf("[DEBUG] Updated user %d to %s\n",user_msg->id, user_msg->username);
+        strncpy(client.users[user_index].name, user_msg->username, MAX_USERNAME_LEN);
+        printf_message("<Updated user %d to %s>",user_msg->id, user_msg->username);
+        update_user_display(client.users, client.num_users);
         break;
     }
     case MSG_USER_CONNECT: {
@@ -166,7 +254,7 @@ int client_handle_packet(Packet* packet) {
         int user_exists = check_user_exists(user_msg->id);
 
         if (user_exists) {
-            printf("[ERROR] User id %d already exists.",user_msg->id);
+            printf_message("[ERROR] User id %d already exists.",user_msg->id);
             free(msg);
             return -1;
         }
@@ -175,7 +263,8 @@ int client_handle_packet(Packet* packet) {
         client.users[client.num_users].active = USER_ACTIVE;
         client.num_users++;
 
-        printf("[DEBUG] New user %d\n",user_msg->id);
+        printf_message("<New User %d Connected>",user_msg->id);
+        update_user_display(client.users, client.num_users);
         break;
     }
     case MSG_USER_DISCONNECT: {
@@ -184,7 +273,7 @@ int client_handle_packet(Packet* packet) {
         int user_index = get_user_index(user_msg->id);
 
         if (user_index == -1) {
-            printf("[ERROR] User id %d does not.",user_msg->id);
+            printf_message("[ERROR] User id %d does not exist.",user_msg->id);
             free(msg);
             return -1;
         }
@@ -192,24 +281,44 @@ int client_handle_packet(Packet* packet) {
         // Mark user as inactive
         client.users[user_index].active = USER_INACTIVE;
 
-        printf("[DEBUG] User Disconnected %d\n",user_msg->id);
+        printf_message("<User %d Disconnected>",user_msg->id);
+        update_user_display(client.users, client.num_users);
         break;    
     }
     case MSG_ACTIVE_USERS:
-        printf("[DEBUG] Updating active users\n");
+        printf_message("<Updating active user list>");
         client_update_active_users((ActiveUserMessage*)msg);
+        update_user_display(client.users, client.num_users);
         break;
-    case MSG_CHAT:
-        // Capture chat in message history
-        client.msgs[client.num_msgs] = *(ChatMessage*)msg;
-        client.num_msgs++;
-        printf("[DEBUG] New message from %d: %s", msg->from, ((ChatMessage*)msg)->msg);
-        break;
-    default:
-        printf("[ERROR] Invalid message type\n");
+    case MSG_CHAT: {
+
+        // Look up user
+        User user;
+        int i = get_user_index(msg->from);
+
+        if (i == -1) {
+            printf_message("[ERROR] Received message from unknown user.");
+            break;
+        }
+
+        user = client.users[i];
+
+        // If there is no username, print id, otherwise print name
+        if (strnlen(user.name, MAX_USERNAME_LEN) == 0) {
+            printf_message("%d: %s",msg->from,((ChatMessage*)msg)->msg);
+        } else {
+            printf_message("%s: %s",user.name,((ChatMessage*)msg)->msg);
+        }
         break;
     }
 
+    default:
+        printf_message("[ERROR] Received invalid message type.");
+        return -1;
+        break;
+    }
+
+    //store_msg(msg);
     free(msg);
     return 1;
 }
@@ -217,14 +326,13 @@ int client_handle_packet(Packet* packet) {
 // Send request to server to set client name      
 int client_req_user_setname(char* username) {
 
-    printf("Requesting setname to %s\n", username);
     UserMessage user_msg = {0};
     user_msg.header.type = MSG_USER_SETNAME;
     user_msg.header.from = client.id;
     user_msg.header.to = SERVER_ID;
 
     user_msg.id = client.id;
-    strncat(user_msg.username, username, MAX_USERNAME_LEN);
+    strncpy(user_msg.username, username, MAX_USERNAME_LEN);
 
     return client_send_message((MessageHeader*)&user_msg);
 }
@@ -260,7 +368,7 @@ int client_send_chat(uint16_t to, char* msg_text) {
     chat_msg.header.from = client.id;
     chat_msg.header.to = to;
 
-    strncat(chat_msg.msg, msg_text, MAX_CHATMSG_LEN);
+    strncpy(chat_msg.msg, msg_text, MAX_CHATMSG_LEN);
 
     return client_send_message((MessageHeader*)&chat_msg);
 
@@ -276,7 +384,7 @@ int client_send_message(MessageHeader* msg) {
     num_bytes = serialize_msg(msg, &buffer);
 
     if (num_bytes == 0) {
-        printf("[ERROR] Failed to serialize message\n");
+        printf_message("[ERROR] Failed to serialize message");
         return -1;
     }
 

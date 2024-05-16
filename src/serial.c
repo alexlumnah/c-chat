@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <arpa/inet.h>
 
 #include "chat.h"
 #include "sock.h"

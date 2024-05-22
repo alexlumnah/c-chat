@@ -21,7 +21,7 @@ all: main
 main: $(OBJ)
 	$(CC) -o main $^ $(CFLAGS) $(LDFLAGS)
 
-test: test/test.o src/sock.o src/serialize.o
+test: test/test.o src/sock.o src/serial.o
 	$(CC) -o run_test $^ $(CFLAGS) $(LDFLAGS)
 
 clean:

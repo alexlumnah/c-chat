@@ -66,16 +66,38 @@ static int db_strnlen(DataBuffer* db, int max_len) {
 int serialize_msg(MessageHeader* msg, char** buffer) {
 
     int status;
-    int un_len;
     DataBuffer db = {0};
     uint16_t msg_len = 0;
     
     switch (msg->type) {
-    case MSG_PING:
-        status = init_empty_buff(&db, 7);
+    case MSG_PING: {
+
+        // Get relevant data
+        PingMessage* ping_msg = (PingMessage*)msg;
+        uint32_t time = htonl(ping_msg->time);
+
+        // Allocate memory for data buffer
+        status = init_empty_buff(&db, sizeof(PingMessage));
         if (status == -1) return -1;
-        msg_len = 7;
+
+        // Increment databuffer pointer past header
+        if (db_has_room(&db, 7)) inc_db(&db, 7);
+        else {
+            free(db.buffer);
+            return -1;
+        }
+
+        // Serialize clock time
+        if( (db_has_room(&db, sizeof(uint32_t)))) {
+            memcpy(db.ptr, &time, sizeof(uint32_t));
+            inc_db(&db, sizeof(uint32_t));
+        }
+
+        // Calculate number of bytes and trim buffer down to size
+        msg_len = db.ptr - db.buffer;
+        db.buffer = realloc(db.buffer, msg_len);
         break;
+    }
     case MSG_USER_SETNAME:      // Intentional fall through
     case MSG_USER_CONNECT:      // Intentional fall through
     case MSG_USER_DISCONNECT: {
@@ -83,6 +105,7 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         // Get relevant data
         UserMessage* user_msg = (UserMessage*)msg;
         uint16_t id = htons(user_msg->id);
+        int un_len;
 
         // Allocate data buffer memory
         status = init_empty_buff(&db, sizeof(UserMessage));
@@ -132,6 +155,7 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         ActiveUserMessage* user_msg = (ActiveUserMessage*)msg;
         uint8_t num_users = user_msg->num_users;
         uint16_t id;
+        int un_len;
 
         // Allocate data buffer memory
         status = init_empty_buff(&db, sizeof(ActiveUserMessage));
@@ -194,6 +218,8 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
     }
     case MSG_CHAT: {
         
+        int chat_len;
+
         // Get relevant data
         ChatMessage* chat_msg = (ChatMessage*)msg;
 
@@ -209,16 +235,56 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         }
 
         // Get length of chat string, ensure it ends in a null byte
-        un_len = strnlen(chat_msg->msg, MAX_CHATMSG_LEN) + 1;
-        if (chat_msg->msg[un_len - 1] != 0) {
+        chat_len = strnlen(chat_msg->msg, MAX_CHATMSG_LEN) + 1;
+        if (chat_msg->msg[chat_len - 1] != 0) {
             free(db.buffer);
             return -1;
         }
 
         // Serialize message
-        if (db_has_room(&db, un_len)) {
+        if (db_has_room(&db, chat_len)) {
             strncat(db.ptr, chat_msg->msg, MAX_CHATMSG_LEN);
-            inc_db(&db, un_len);
+            inc_db(&db, chat_len);
+        } else {
+            free(db.buffer);
+            return -1;
+        }
+        
+        // Calculate number of bytes and trim buffer down to size
+        msg_len = db.ptr - db.buffer;
+        db.buffer = realloc(db.buffer, msg_len);
+
+        break;
+    }
+    case MSG_ERROR: {
+
+        int err_len;
+        
+        // Get relevant data
+        ErrorMessage* err_msg = (ErrorMessage*)msg;
+
+        // Allocate data buffer memory
+        status = init_empty_buff(&db, sizeof(ErrorMessage));
+        if (status == -1) return -1;
+
+        // Increment databuffer pointer past header
+        if (db_has_room(&db, 7)) inc_db(&db, 7);
+        else {
+            free(db.buffer);
+            return -1;
+        }
+
+        // Get length of chat string, ensure it ends in a null byte
+        err_len = strnlen(err_msg->msg, MAX_CHATMSG_LEN) + 1;
+        if (err_msg->msg[err_len - 1] != 0) {
+            free(db.buffer);
+            return -1;
+        }
+
+        // Serialize message
+        if (db_has_room(&db, err_len)) {
+            strncat(db.ptr, err_msg->msg, MAX_CHATMSG_LEN);
+            inc_db(&db, err_len);
         } else {
             free(db.buffer);
             return -1;
@@ -231,7 +297,6 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         break;
     }
     default:
-        printf("[ERROR] Invalid message type: %d.\n", msg->type);
         return -1;
     }
 
@@ -313,14 +378,31 @@ MessageHeader* deserialize_msg(char* buffer, int buffer_size) {
     }
 
     switch (msg->type) {
-    case MSG_PING:
+    case MSG_PING: {
+
+        // Reallocate enough room for this message, set to all zeroes
+        PingMessage* ping_msg = (PingMessage*)realloc(msg, sizeof(PingMessage));
+        if (ping_msg == NULL) {
+            free(msg);
+            return NULL;
+        }
+        memset((char*)ping_msg + sizeof(MessageHeader), 0, sizeof(PingMessage) - sizeof(MessageHeader));
+
+        // Deserialize time
+        if (db_has_room(&db, sizeof(uint32_t))) {
+            memcpy(&ping_msg->time, db.ptr, sizeof(uint32_t)); 
+            ping_msg->time = (uint32_t)ntohl(ping_msg->time);   // Ensure data is host-endian
+            inc_db(&db, sizeof(uint32_t));
+        }
+
         // Confirm we reached the end of the buffer
         if (db_has_room(&db, 1)) {
             free(msg);
             return NULL;
         }
 
-        return msg;
+        return (MessageHeader*)ping_msg;
+    }
     case MSG_USER_SETNAME:      // Intentional fall through
     case MSG_USER_CONNECT:      // Intentional fall through
     case MSG_USER_DISCONNECT: {
@@ -440,6 +522,34 @@ MessageHeader* deserialize_msg(char* buffer, int buffer_size) {
         }
     
         return (MessageHeader*)chat_msg;
+    }
+    case MSG_ERROR: {
+    
+        // Reallocate enough room for this message, set to all zeroes
+        ErrorMessage* err_msg = (ErrorMessage*)realloc(msg, sizeof(ErrorMessage));
+        if (err_msg == NULL) {
+            free(msg);
+            return NULL;
+        }
+         memset((char*)err_msg + sizeof(MessageHeader), 0, sizeof(ErrorMessage) - sizeof(MessageHeader));
+            
+        // Deserialize string
+        un_len = db_strnlen(&db, MAX_CHATMSG_LEN + 1);
+        if (un_len != -1) {
+            memcpy(&err_msg->msg, db.ptr, un_len); 
+            inc_db(&db, un_len);
+        } else {
+            free(err_msg);
+            return NULL;
+        }
+
+        // Confirm we reached the end of the buffer
+        if (db_has_room(&db, 1)) {
+            free(err_msg);
+            return NULL;
+        }
+    
+        return (MessageHeader*)err_msg;
     }
     default:
         free(msg);

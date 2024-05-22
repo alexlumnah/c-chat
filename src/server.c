@@ -19,6 +19,7 @@ static int get_user_index(uint16_t id) {
 
     return -1;
 }
+
 // Check if a user exists
 static bool check_user_exists(uint16_t id) {
 
@@ -26,6 +27,17 @@ static bool check_user_exists(uint16_t id) {
     
 }
 
+// Check if a username exists
+static bool username_taken(const char* username) {
+
+    for (int i = 0; i < server.num_users; i++) {
+        if (strncmp(server.users[i].name, username, MAX_USERNAME_LEN) == 0){
+            return true;
+        }
+    }
+
+    return false;
+}
 
 // Start chat server, and run until disconnected
 int start_chat_server(char* port) {
@@ -131,10 +143,21 @@ int server_handle_packet(Packet* packet) {
     }
     case MSG_USER_SETNAME: {
 
-        printf("[DEBUG] Setting Username for id %d to %s\n", packet->sender, ((UserMessage*)msg)->username);
+        // First confirm user exists
         int user_index = get_user_index(packet->sender);
-        if (user_index == -1) return -1;
+        if (user_index == -1) {
+            printf("[ERROR] Received packet from unknown sender.\n");
+            break;
+        }
 
+        // Confirm username isn't taken
+        if (username_taken(((UserMessage*)msg)->username)) {
+            printf("[DEBUG] Username already taken.\n");
+            server_send_error(packet->sender, "Username already taken.");
+            break;
+        }
+
+        printf("[DEBUG] Setting Username for id %d to %s\n", packet->sender, ((UserMessage*)msg)->username);
         strncpy(server.users[user_index].name, ((UserMessage*)msg)->username, MAX_USERNAME_LEN);
         server_send_user_setname(packet->sender, server.users[user_index].name);
         break;
@@ -192,7 +215,6 @@ int server_send_message(MessageHeader* msg) {
 
 // Send set name request to all users               
 int server_send_user_setname(uint16_t id, char* name) {
-    printf("[TEST] User %d set name: %s\n",id, name);
 
     UserMessage user_msg = {0};
     user_msg.header.type = MSG_USER_SETNAME;
@@ -236,7 +258,7 @@ int server_send_user_disconnect(uint16_t id) {
 // Send list of all active users to all users        
 int server_send_active_users(uint16_t id) {
 
-    printf("[TEST] Broadcasting active users. %d\n", server.num_users);
+    printf("[DEBUG] Broadcasting active users. %d\n", server.num_users);
  
     ActiveUserMessage msg = {0};
 
@@ -254,4 +276,17 @@ int server_send_active_users(uint16_t id) {
 
     return server_send_message((MessageHeader*)&msg);
 
+}
+
+// Send error message to user      
+int server_send_error(uint16_t id, const char* err) {
+
+    ErrorMessage err_msg = {0};
+    err_msg.header.type = MSG_ERROR;
+    err_msg.header.from = SERVER_ID;
+    err_msg.header.to = id;
+
+    strncpy(err_msg.msg, err, MAX_CHATMSG_LEN);
+
+    return server_send_message((MessageHeader*)&err_msg);
 }        

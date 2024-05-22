@@ -15,6 +15,7 @@ typedef enum MessageType {
     MSG_USER_DISCONNECT,
     MSG_ACTIVE_USERS,
     MSG_CHAT,
+    MSG_ERROR,
 } MessageType;
 
 typedef struct MessageHeader {
@@ -26,6 +27,7 @@ typedef struct MessageHeader {
 
 typedef struct PingMessage {
     MessageHeader header;
+    uint32_t time;
 } PingMessage;
 
 typedef struct UserMessage {
@@ -45,6 +47,11 @@ typedef struct ChatMessage {
     MessageHeader header;
     char msg[MAX_CHATMSG_LEN + 1];
 } ChatMessage;
+
+typedef struct ErrorMessage {
+    MessageHeader header;
+    char msg[MAX_CHATMSG_LEN + 1];
+} ErrorMessage;
 
 typedef enum UserStatus {
     USER_INACTIVE = 0,
@@ -76,7 +83,7 @@ int serialize_msg(MessageHeader* msg, char** buffer);           // Serialize mes
 MessageHeader* deserialize_msg(char* buffer, int num_bytes);    // Deserialize a message, function will malloc required memory
 
 // Server utilties
-ChatClient* get_client(void);                           // Get pointer to chat client struct
+//ChatClient* get_client(void);                           // Get pointer to chat client struct
 int start_chat_server(char* port);                      // Start chat server, and run until disconnected
 int chat_server_run(void);                              // Run chat server, poll for requests, and forward messages
 int server_handle_packet(Packet* packet);               // Handle packet from clients
@@ -86,6 +93,7 @@ int server_send_user_setname(uint16_t id, char* name);  // Send set name request
 int server_send_user_connect(uint16_t id);              // Send user connect message to all users
 int server_send_user_disconnect(uint16_t id);           // Send user disconnect message to all users
 int server_send_active_users(uint16_t to);              // Send list of all active users to id
+int server_send_error(uint16_t id, const char* err);    // Send error message to client
 
 // Chat Client Utilties
 int start_chat_client(char* host, char* port);          // Start chat client

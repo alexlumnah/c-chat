@@ -21,6 +21,8 @@ bool serial_deserial_ping_msg_test(bool verbose) {
     msg.header.from = 0;
     msg.header.to = 65535;
 
+    msg.time = 100000;
+
     size_t num_bytes;
     char* buffer;
 
@@ -31,6 +33,8 @@ bool serial_deserial_ping_msg_test(bool verbose) {
     PingMessage* out;
 
     out = (PingMessage*)deserialize_msg(buffer, num_bytes);
+
+    if (out == NULL) return false;
 
     if (verbose) {
         printf("--------------------------------\n");
@@ -176,6 +180,44 @@ bool serial_deserial_chat_msg_test(bool verbose, char* message) {
     return match;
 }
 
+bool serial_deserial_err_msg_test(bool verbose, char* message) {
+
+    // Create message
+    ErrorMessage msg = {0};
+    msg.header.type = MSG_ERROR;
+    msg.header.from = 0;
+    msg.header.to = 1024;
+    strncpy(msg.msg, message, MAX_CHATMSG_LEN);
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    ErrorMessage* out;
+
+    out = (ErrorMessage*)deserialize_msg(buffer, num_bytes);
+
+    if (verbose) {
+        printf("\n--------------------------------\n");
+        print_buffer(buffer, num_bytes);
+        printf("'Len' Before: %d After: %d\n", msg.header.len, out->header.len);
+        printf("'Type' Before: %d After: %d\n", msg.header.type, out->header.type);
+        printf("'From' Before: %d After: %d\n", msg.header.from, out->header.from);
+        printf("'To' Before: %d After: %d\n", msg.header.to, out->header.to);
+        printf("'Msg' Before: %s After: %s\n", msg.msg, out->msg);
+    }
+
+    bool match = memcmp(&msg, out, sizeof(ErrorMessage)) == 0;
+
+    free(buffer);
+    free(out);
+
+    return match;
+}
+
 bool corrupt_serial_user_msg_test(bool verbose) {
 
     (void) verbose; // Ignore compiler warnings
@@ -237,6 +279,51 @@ bool corrupt_serial_chat_msg_test(bool verbose) {
 
     // Overwrite null byte in string to confirm we don't overflow
     memset(msg.msg,'a',MAX_CHATMSG_LEN + 1);
+
+    int num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    if (num_bytes == -1) return true;
+
+    return false;
+
+}
+
+bool corrupt_serial_err_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ErrorMessage msg = {0};
+    msg.header.type = MSG_ERROR;
+    msg.header.from = 728;
+    msg.header.to = 37;
+
+    // Overwrite null byte in string to confirm we don't overflow
+    memset(msg.msg,'a',MAX_CHATMSG_LEN + 1);
+
+    int num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    if (num_bytes == -1) return true;
+
+    return false;
+
+}
+
+bool corrupt_serial_invalid_type_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    PingMessage msg = {0};
+    msg.header.type = 99;
+    msg.header.from = 56;
+    msg.header.to = 12;
 
     int num_bytes;
     char* buffer;
@@ -363,6 +450,73 @@ bool corrupt_deserial_chat_msg_test(bool verbose) {
     }
 }
 
+bool corrupt_deserial_err_msg_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    ErrorMessage msg = {0};
+    msg.header.type = MSG_ERROR;
+    msg.header.from = 656;
+    msg.header.to = 3;
+    strncpy(msg.msg, "Testing 123", MAX_CHATMSG_LEN);
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    // Overwrite last null byte
+    buffer[num_bytes - 1] = 'a';
+
+    ErrorMessage* out;
+
+    out = (ErrorMessage*)deserialize_msg(buffer, num_bytes);
+
+    // Confirm deserialization fails gracefully
+    if (out == NULL) {
+        return true;
+    } else {
+        free(out);
+        return false;
+    }
+}
+
+bool corrupt_deserial_invalid_type_test(bool verbose) {
+
+    (void) verbose; // Ignore compiler warnings
+
+    // Create message
+    PingMessage msg = {0};
+    msg.header.type = MSG_PING;
+    msg.header.from = 656;
+    msg.header.to = 3;
+
+    size_t num_bytes;
+    char* buffer;
+
+    num_bytes = serialize_msg((MessageHeader*)&msg, &buffer);
+
+    msg.header.len = num_bytes; // Message length is calculated and packed by the serialization function
+
+    // Overwrite type byte
+    buffer[0] = (uint8_t)99;
+
+    ErrorMessage* out;
+
+    out = (ErrorMessage*)deserialize_msg(buffer, num_bytes);
+
+    // Confirm deserialization fails gracefully
+    if (out == NULL) {
+        return true;
+    } else {
+        free(out);
+        return false;
+    }
+}
+
 
 
 int main(int argc, char* argv[]) {
@@ -393,11 +547,18 @@ int main(int argc, char* argv[]) {
     printf("ChatMessage Test 1: %s\n", serial_deserial_chat_msg_test(verbose, "Test Message 1") ? "PASS" : "FAIL");
     printf("ChatMessage Test 2: %s\n", serial_deserial_chat_msg_test(verbose, "") ? "PASS" : "FAIL");
     printf("ChatMessage Test 3: %s\n", serial_deserial_chat_msg_test(verbose, "A very long message that exceeds the maximum message length. This message needs to exceed the 256 character limit, so it will go on and on and on and on and on and on and on and on. Its still not quite long enough though, so it will keep going on and on and on.") ? "PASS" : "FAIL");
+    printf("ErrorMessage Test 1: %s\n", serial_deserial_err_msg_test(verbose, "Test Message 1") ? "PASS" : "FAIL");
+    printf("ErrorMessage Test 2: %s\n", serial_deserial_err_msg_test(verbose, "") ? "PASS" : "FAIL");
+    printf("ErrorMessage Test 3: %s\n", serial_deserial_err_msg_test(verbose, "A very long message that exceeds the maximum message length. This message needs to exceed the 256 character limit, so it will go on and on and on and on and on and on and on and on. Its still not quite long enough though, so it will keep going on and on and on.") ? "PASS" : "FAIL");
     printf("Corrupt Message Serialization 1: %s\n", corrupt_serial_user_msg_test(verbose) ? "PASS" : "FAIL");  
     printf("Corrupt Message Serialization 2: %s\n", corrupt_serial_active_user_msg_test(verbose) ? "PASS" : "FAIL");    
     printf("Corrupt Message Serialization 3: %s\n", corrupt_serial_chat_msg_test(verbose) ? "PASS" : "FAIL");
+    printf("Corrupt Message Serialization 4: %s\n", corrupt_serial_err_msg_test(verbose) ? "PASS" : "FAIL");
+    printf("Corrupt Message Serialization 5: %s\n", corrupt_serial_invalid_type_test(verbose) ? "PASS" : "FAIL");
     printf("Corrupt Message Deserialization 1: %s\n", corrupt_deserial_user_msg_test(verbose) ? "PASS" : "FAIL");  
     printf("Corrupt Message Deserialization 2: %s\n", corrupt_deserial_active_user_msg_test(verbose) ? "PASS" : "FAIL");    
     printf("Corrupt Message Deserialization 3: %s\n", corrupt_deserial_chat_msg_test(verbose) ? "PASS" : "FAIL");
+    printf("Corrupt Message Deserialization 4: %s\n", corrupt_deserial_err_msg_test(verbose) ? "PASS" : "FAIL");
+    printf("Corrupt Message Deserialization 5: %s\n", corrupt_deserial_invalid_type_test(verbose) ? "PASS" : "FAIL");
 
 }

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <curses.h>
+#include <time.h>
 
 #include "sock.h"
 #include "chat.h"
@@ -85,6 +86,7 @@ void interpret_input(char* buffer, int buff_len) {
 void client_run(void) {
 
     int c;
+    int status;
     int buff_len = 0;
     char buffer[MAX_MESSAGE_LEN] = {0};
 
@@ -98,7 +100,7 @@ void client_run(void) {
     do {
 
         // Poll for messages
-        client_check_messages(1000);
+        status = client_check_messages(1000);
 
         // Get input
         while ((c = getch()) != ERR){
@@ -133,7 +135,7 @@ void client_run(void) {
         // Update screen
         draw_screen(buffer);
 
-    } while (c != 27);
+    } while (c != 27 && status != -1);
 
 }
 
@@ -164,9 +166,8 @@ int client_check_messages(int timeout) {
     if (packet != NULL) {
         status = client_handle_packet(packet);
         free(packet);
+        if (status != 1) return -1;
     }
-
-    if (status != 1) return -1;
 
     return 1;
 }
@@ -223,15 +224,19 @@ int client_update_active_users(ActiveUserMessage* msg) {
     return 1;
 }
 
-// Read message, and update chat room state        
+// Read message, and update chat room state
 int client_handle_packet(Packet* packet) {
 
     MessageHeader* msg = deserialize_msg(packet->data, packet->len);
 
     switch (msg->type) {
-    case MSG_PING:
-        printf_message("<PING!>");
+    case MSG_PING: {
+        double time = clock() - ((PingMessage*)msg)->time;
+        time *= 1000.0 / CLOCKS_PER_SEC; // Convert time to ms
+
+        printf_message("<PING! - %0.3fms>", time);
         break;
+    }
     case MSG_USER_SETNAME: {
 
         UserMessage* user_msg = (UserMessage*)msg;
@@ -239,8 +244,7 @@ int client_handle_packet(Packet* packet) {
 
         if (user_index == -1) {
             printf_message("[ERROR] User id %d doesn't exist.",user_msg->id);
-            free(msg);
-            return -1;
+            break;
         }
 
         strncpy(client.users[user_index].name, user_msg->username, MAX_USERNAME_LEN);
@@ -255,8 +259,7 @@ int client_handle_packet(Packet* packet) {
 
         if (user_exists) {
             printf_message("[ERROR] User id %d already exists.",user_msg->id);
-            free(msg);
-            return -1;
+            break;
         }
 
         client.users[client.num_users].id = user_msg->id;
@@ -274,8 +277,7 @@ int client_handle_packet(Packet* packet) {
 
         if (user_index == -1) {
             printf_message("[ERROR] User id %d does not exist.",user_msg->id);
-            free(msg);
-            return -1;
+            break;
         }
 
         // Mark user as inactive
@@ -311,10 +313,11 @@ int client_handle_packet(Packet* packet) {
         }
         break;
     }
-
+    case MSG_ERROR:
+        printf_message("[ERROR]: %s",((ErrorMessage*)msg)->msg);
+        break;
     default:
         printf_message("[ERROR] Received invalid message type.");
-        return -1;
         break;
     }
 
@@ -356,6 +359,8 @@ int client_ping_server(void) {
     ping_msg.header.type = MSG_PING;
     ping_msg.header.from = client.id;
     ping_msg.header.to = SERVER_ID;   // Default Server Address
+
+    ping_msg.time = clock();
 
     return client_send_message((MessageHeader*)&ping_msg);
 }

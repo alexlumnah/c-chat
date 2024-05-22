@@ -43,7 +43,7 @@ static ChatStatus client_send_message(MessageHeader* msg) {
         return CHAT_FAILURE;
     }
 
-    status = client_send_packet(buffer, num_bytes);
+    status = client_socket_send_packet(buffer, num_bytes);
     free(buffer);
 
     if (status != SOCK_SUCCESS) return CHAT_FAILURE;
@@ -281,7 +281,7 @@ ChatStatus start_chat_client(char* host, char* port) {
     Packet* packet;
     MessageHeader* msg;
 
-    status = start_client(host, port);
+    status = start_client_socket(host, port);
 
     if (status != SOCK_SUCCESS) return CHAT_FAILURE;
     
@@ -385,6 +385,6 @@ void end_chat_client(void) {
     kill_window();
 
     // Shutdown socket
-    shutdown_client();
+    shutdown_client_socket();
 
 }

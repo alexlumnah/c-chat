@@ -2,6 +2,7 @@
 #define CHAT_H
 
 #include <stddef.h>
+
 #include "sock.h"
 
 #define MAX_USERNAME_LEN (16)
@@ -19,10 +20,10 @@ typedef enum MessageType {
 } MessageType;
 
 typedef struct MessageHeader {
-    uint8_t type;                       // Message type   
-    uint16_t len;                       // Length of proceeding data, populated by serialize function
-    uint16_t from;                      // Message Source
-    uint16_t to;                        // Message Destination
+    uint8_t type;                           // Message type   
+    uint16_t len;                           // Length of proceeding data, populated by serialize function
+    uint16_t from;                          // Message Source
+    uint16_t to;                            // Message Destination
 } MessageHeader;
 
 typedef struct PingMessage {
@@ -64,15 +65,15 @@ typedef struct User {
     char name[MAX_USERNAME_LEN + 1];
 } User;
 
-typedef enum ChatStatus {       // Status codes for Chat Client/Server
-    CHAT_SUCCESS = 0,
-    CHAT_FAILURE,
+typedef enum ChatStatus {
+    CHAT_SUCCESS = 0,                       // Client/Server Return Sucess
+    CHAT_FAILURE,                           // Client/Server Return Failure
 } ChatStatus;
 
 typedef struct ChatServer {
     int num_users;                          // Number of users connected to server
     User users[MAX_CLIENTS];                // Array of users connected to server
-    SockState* socket_connection;           // Pointer to socket interface
+    SocketState* socket_connection;         // Pointer to socket interface
 } ChatServer;
 
 typedef struct ChatClient {
@@ -82,24 +83,21 @@ typedef struct ChatClient {
     User users[MAX_CLIENTS];                // List of users in chat room
 } ChatClient;
 
-/*
- * Public Functions:
- */
 
-// Serialize/Deserialize Messages
+// serial.c: Serialize/Deserialize Messages
 int serialize_msg(MessageHeader* msg, char** buffer);           // Serialize message, typecast message into header, function will malloc required memory
 MessageHeader* deserialize_msg(char* buffer, int num_bytes);    // Deserialize a message, function will malloc required memory
 
-// Server utilties
+// server.c: Server Utilties
 ChatStatus start_chat_server(char* port);                       // Start chat server, and run until disconnected
 void chat_server_run(void);                                     // Run chat server, poll for requests, and forward messages
 
-// Chat Client Utilties
+// client.c: Chat Client Utilties
 ChatStatus start_chat_client(char* host, char* port);           // Start chat client
 ChatStatus client_run(void);                                    // Start main chat client loop
 void end_chat_client(void);                                     // End chat client
 
-// UI Utilities
+// ui.c: UI Utilities
 void init_window(void);                                         // Initialize UI Window
 void kill_window(void);                                         // Kill UI Window
 void update_user_display(User* users, int num_users);           // Update User Display

@@ -19,42 +19,34 @@
 #define DEBUG_PRINT2(packet1, packet2) (printf("[DEBUG] %s %s\n", packet1, packet2))
 #define DEBUG_PRINT3(packet1, val) (printf("[DEBUG] %s %d\n", packet1, val))
 
-static SockState connection;
+static SocketState connection;
 
-SockState* sock_get_state(void) {
+// Lookup id based on client fd
+static int id_to_fd(uint16_t id) {
 
-    return &connection;
-}
-
-// Return number of packets in queue
-int num_packets(void) {
-    
-    int num_packets = 0;
-
-    Packet* q_ptr = connection.packet_queue;
-    while (q_ptr != NULL) {
-        num_packets++;
-        q_ptr = q_ptr->next_packet;
+    for (int i = 0; i < connection.num_clients; i++) {
+        if (connection.clients[i].id == id) {
+            return connection.clients[i].fd;
+        }
     }
 
-    return num_packets;
+    return -1;  
 }
 
-// Pop packet at top of packet queue and return pointer. Ownership passes to caller.
-Packet* pop_packet(void) {
+// Lookup fd based on client id                                 
+static int fd_to_id(int fd) {
 
-    Packet* q_ptr = connection.packet_queue;
-    if (q_ptr != NULL) {
-        connection.packet_queue = connection.packet_queue->next_packet;
-        q_ptr->next_packet = NULL;
+    for (int i = 0; i < connection.num_clients; i++) {
+        if (connection.clients[i].fd == fd) {
+            return connection.clients[i].id;
+        }
     }
 
-    return q_ptr;
+    return -1;  
 }
-
 
 // Send data to a socket
-int send_packet(int socket_fd, char* data, size_t num_bytes) {
+static SocketStatus send_packet(int socket_fd, char* data, size_t num_bytes) {
 
     int bytes_sent;
     uint16_t nw_len;
@@ -77,7 +69,7 @@ int send_packet(int socket_fd, char* data, size_t num_bytes) {
 
 // Receive and unpack a packet, store in packet queue
 // Allocates memory for storage, hands ownership to queue owner
-int recv_packet(int socket_fd) {
+static SocketStatus recv_packet(int socket_fd) {
 
     ssize_t num_bytes;
     char buffer[MAX_MESSAGE_LEN] = {0};
@@ -148,40 +140,39 @@ int recv_packet(int socket_fd) {
     return SOCK_SUCCESS;
 }
 
-// Lookup id based on client fd
-int id_to_fd(uint16_t id) {
+SocketState* sock_get_state(void) {
 
-    for (int i = 0; i < connection.num_clients; i++) {
-        if (connection.clients[i].id == id) {
-            return connection.clients[i].fd;
-        }
-    }
-
-    return -1;  
+    return &connection;
 }
 
-// Lookup fd based on client id                                 
-int fd_to_id(int fd) {
+// Return number of packets in queue
+int num_packets(void) {
+    
+    int num_packets = 0;
 
-    for (int i = 0; i < connection.num_clients; i++) {
-        if (connection.clients[i].fd == fd) {
-            return connection.clients[i].id;
-        }
+    Packet* q_ptr = connection.packet_queue;
+    while (q_ptr != NULL) {
+        num_packets++;
+        q_ptr = q_ptr->next_packet;
     }
 
-    return -1;  
-}              
+    return num_packets;
+}
 
-// Dump contents of a data buffer
-void dump_data(char* data, int num_bytes) {
-    for (int i = 0; i < num_bytes; i++) {
-        printf("%.02x ", (unsigned char)data[i]);
+// Pop packet at top of packet queue and return pointer. Ownership passes to caller.
+Packet* pop_packet(void) {
+
+    Packet* q_ptr = connection.packet_queue;
+    if (q_ptr != NULL) {
+        connection.packet_queue = connection.packet_queue->next_packet;
+        q_ptr->next_packet = NULL;
     }
-    printf("\n");
-}                  
+
+    return q_ptr;
+}            
 
 // Start a server on the local host at specified port
-int start_server(char* port) {
+SocketStatus start_server_socket(char* port) {
 
     memset(&connection, 0, sizeof connection);   // Clear out state
 
@@ -270,7 +261,7 @@ int start_server(char* port) {
 }
 
 // Accept any incoming connections, add to client list
-int accept_client(void) {
+SocketStatus accept_client_socket(void) {
     
     int client_socket;
     struct sockaddr_storage cli_addr;
@@ -304,7 +295,7 @@ int accept_client(void) {
 
 // Close connection to client, mark connection as closed
 // Note: client still remains in list until it is flushed
-int disconnect_client(uint16_t client_id) {
+SocketStatus disconnect_client_socket(uint16_t client_id) {
 
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
@@ -330,7 +321,7 @@ int disconnect_client(uint16_t client_id) {
 }
 
 // Remove inactive clients from list of clients
-int flush_inactive_clients(void) {
+SocketStatus flush_inactive_client_sockets(void) {
 
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
@@ -358,38 +349,38 @@ int flush_inactive_clients(void) {
 }
 
 // Send packet to client
-int server_send_packet(uint16_t client_id, char* data, size_t num_bytes) {
+SocketStatus server_socket_send_packet(uint16_t client_id, char* data, size_t num_bytes) {
 
     return send_packet(id_to_fd(client_id), data, num_bytes);
 }
 
 // Receive packet from client
-int server_recv_packet(uint16_t client_id) {
+SocketStatus server_socket_recv_packet(uint16_t client_id) {
 
     return recv_packet(id_to_fd(client_id));
 }
 
 // Shutdown server and all client connections
-int shutdown_server(void) {
+SocketStatus shutdown_server_socket(void) {
 
     if (connection.type == SOCK_UNINITIALIZED) return SOCK_ERR_UNINITIALIZED;
     else if (connection.type == SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
     printf("Shutting down connection.\n");
     for (int i = 1; i < connection.num_clients; i++) {
-        disconnect_client(connection.clients[i].id);
+        disconnect_client_socket(connection.clients[i].id);
     }
 
     close(connection.socket);
 
-    memset(&connection, 0, sizeof(SockState));
+    memset(&connection, 0, sizeof(SocketState));
 
     return SOCK_SUCCESS;
 }
 
 // Poll connection for connections or packets
 // Accept any new connections, and add new packets to queue
-int poll_sockets(int timeout) {
+SocketStatus poll_sockets(int timeout) {
 
     // Poll for any activity
     struct pollfd active_fds[MAX_CLIENTS + 1] = {0};
@@ -428,10 +419,10 @@ int poll_sockets(int timeout) {
         // First check our connection for any incoming requests
         if (active_fds[0].revents & POLLIN) {
             DEBUG_PRINT("Polled new connection");
-            status = accept_client();
+            status = accept_client_socket();
             if (status == SOCK_ERR_SOCKET_DISCONNECT) {
                 DEBUG_PRINT("Socket error.");
-                shutdown_server();
+                shutdown_server_socket();
                 return SOCK_ERR_SOCKET_DISCONNECT;
             }
         }
@@ -442,7 +433,7 @@ int poll_sockets(int timeout) {
                 DEBUG_PRINT("Polled new packet");
                 status = recv_packet(active_fds[i].fd);
                 if (status == SOCK_ERR_SOCKET_DISCONNECT) {
-                    disconnect_client(active_ids[i]);
+                    disconnect_client_socket(active_ids[i]);
                 }
             }
         }
@@ -453,7 +444,7 @@ int poll_sockets(int timeout) {
             status = recv_packet(active_fds[0].fd);
             if (status == SOCK_ERR_SOCKET_DISCONNECT) {
                 DEBUG_PRINT("Server disconnected.");
-                shutdown_client();
+                shutdown_client_socket();
                 return SOCK_ERR_SOCKET_DISCONNECT;
             }
         }
@@ -464,7 +455,7 @@ int poll_sockets(int timeout) {
 }
 
 // Start a client and connect to host at specified port
-int start_client(char* host, char* port) {
+SocketStatus start_client_socket(char* host, char* port) {
 
     int status;             // Variable for storing function return status
     int socket_fd;           // Variable for storing socket file descriptor
@@ -532,7 +523,7 @@ int start_client(char* host, char* port) {
 }
 
 // Send packet from client to server
-int client_send_packet(char* data, size_t num_bytes) {
+SocketStatus client_socket_send_packet(char* data, size_t num_bytes) {
 
     if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
@@ -540,7 +531,7 @@ int client_send_packet(char* data, size_t num_bytes) {
 }
 
 // Shutdown client
-int shutdown_client(void) {
+SocketStatus shutdown_client_socket(void) {
 
     if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 
@@ -548,7 +539,7 @@ int shutdown_client(void) {
 
     close(connection.socket);
 
-    memset(&connection, 0, sizeof(SockState));
+    memset(&connection, 0, sizeof(SocketState));
 
     return SOCK_SUCCESS;
 }

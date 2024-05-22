@@ -53,10 +53,10 @@ static ChatStatus server_send_message(MessageHeader* msg) {
     if (msg->to == SERVER_ID) {
         status = 0;
         for (int i = 0; i < server.num_users; i++) {
-            status = server_send_packet(server.users[i].id, buffer, num_bytes);
+            status = server_socket_send_packet(server.users[i].id, buffer, num_bytes);
         }
     } else {
-        status = server_send_packet(msg->to, buffer, num_bytes);
+        status = server_socket_send_packet(msg->to, buffer, num_bytes);
     }
     
     free(buffer);
@@ -180,7 +180,7 @@ static void server_sync_users(void) {
     }
 
     // Flush inactive clients from SocketConnection
-    flush_inactive_clients();
+    flush_inactive_client_sockets();
 }
 
 // Handle an incoming message
@@ -229,10 +229,10 @@ static void server_handle_packet(Packet* packet) {
         printf("[DEBUG] Forwarding chat to id %d.\n",msg->to);
         if (msg->to == SERVER_ID) {
             for (int i = 0; i < server.num_users; i++) {
-                server_send_packet(server.users[i].id, packet->data, packet->len);
+                server_socket_send_packet(server.users[i].id, packet->data, packet->len);
             }
         } else {
-            server_send_packet(msg->to, packet->data, packet->len);
+            server_socket_send_packet(msg->to, packet->data, packet->len);
         }
         break;
     }
@@ -250,7 +250,7 @@ ChatStatus start_chat_server(char* port) {
 
     int status;
 
-    status = start_server(port);
+    status = start_server_socket(port);
 
     if (status != SOCK_SUCCESS) return CHAT_FAILURE;
 

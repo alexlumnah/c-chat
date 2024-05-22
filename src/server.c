@@ -39,50 +39,111 @@ static bool username_taken(const char* username) {
     return false;
 }
 
-// Start chat server, and run until disconnected
-int start_chat_server(char* port) {
+// Send a message
+static ChatStatus server_send_message(MessageHeader* msg) {
 
     int status;
+    char* buffer;
+    int num_bytes;
+    
+    num_bytes = serialize_msg(msg, &buffer);
 
-    status = start_server(port);
+    if (num_bytes == 0) return -1;
 
-    if (status != SOCK_SUCCESS) return -1;
-
-    server.socket_connection = sock_get_state();
-
-    return 1;
-}  
-
-// Run chat server, poll for requests, and forward messages                  
-int chat_server_run(void) {
-
-    int status;
-    Packet* packet;
-
-    do {
-        // Poll for inputs, timeout of one second
-        status = poll_sockets(1000);
-
-        // Check for new connections and disconnections
-        server_sync_users();
-
-        // Check for messages
-        packet = pop_packet();
-
-        // Handle Packet
-        while (packet != NULL) {
-            server_handle_packet(packet);
-            free(packet);
-            packet = pop_packet();
+    if (msg->to == SERVER_ID) {
+        status = 0;
+        for (int i = 0; i < server.num_users; i++) {
+            status = server_send_packet(server.users[i].id, buffer, num_bytes);
         }
+    } else {
+        status = server_send_packet(msg->to, buffer, num_bytes);
+    }
+    
+    free(buffer);
 
-    } while (status == SOCK_SUCCESS);
-
-    return 1;
+    return status;
 }
 
+// Send set name request to all users               
+static ChatStatus server_send_user_setname(uint16_t id, char* name) {
+
+    UserMessage user_msg = {0};
+    user_msg.header.type = MSG_USER_SETNAME;
+    user_msg.header.from = SERVER_ID;
+    user_msg.header.to = SERVER_ID; // ALL
+
+    user_msg.id = id;
+    strncpy(user_msg.username, name, MAX_USERNAME_LEN);
+
+    return server_send_message((MessageHeader*)&user_msg);
+
+}
+
+// Send user connect message to all users  
+static ChatStatus server_send_user_connect(uint16_t id) {
+
+    UserMessage user_msg = {0};
+    user_msg.header.type = MSG_USER_CONNECT;
+    user_msg.header.from = SERVER_ID;
+    user_msg.header.to = SERVER_ID; // ALL
+
+    user_msg.id = id;
+
+    return server_send_message((MessageHeader*)&user_msg);
+
+}        
+
+// Send user disconnect message to all users      
+static ChatStatus server_send_user_disconnect(uint16_t id) {
+
+    UserMessage user_msg = {0};
+    user_msg.header.type = MSG_USER_DISCONNECT;
+    user_msg.header.from = SERVER_ID;
+    user_msg.header.to = SERVER_ID; // ALL
+
+    user_msg.id = id;
+
+    return server_send_message((MessageHeader*)&user_msg);
+}   
+
+// Send list of all active users to all users        
+static ChatStatus server_send_active_users(uint16_t id) {
+
+    printf("[DEBUG] Broadcasting active users. %d\n", server.num_users);
+ 
+    ActiveUserMessage msg = {0};
+
+    // Build active user message
+    msg.header.type = MSG_ACTIVE_USERS;
+    msg.header.from = SERVER_ID;
+    msg.header.to = id;
+
+    msg.num_users = server.num_users;
+
+    for (int i = 0; i < server.num_users; i++) {
+        msg.ids[i] = server.users[i].id;
+        strncpy(msg.usernames[i], server.users[i].name, MAX_USERNAME_LEN);
+    }
+
+    return server_send_message((MessageHeader*)&msg);
+
+}
+
+// Send error message to user      
+static int server_send_error(uint16_t id, const char* err) {
+
+    ErrorMessage err_msg = {0};
+    err_msg.header.type = MSG_ERROR;
+    err_msg.header.from = SERVER_ID;
+    err_msg.header.to = id;
+
+    strncpy(err_msg.msg, err, MAX_CHATMSG_LEN);
+
+    return server_send_message((MessageHeader*)&err_msg);
+}    
+
 // Check for new connections and disconnections
-int server_sync_users(void) {
+static void server_sync_users(void) {
 
     uint16_t user_id;
     int user_index;
@@ -120,12 +181,10 @@ int server_sync_users(void) {
 
     // Flush inactive clients from SocketConnection
     flush_inactive_clients();
-
-    return 1;
 }
 
 // Handle an incoming message
-int server_handle_packet(Packet* packet) {
+static void server_handle_packet(Packet* packet) {
 
     MessageHeader* msg = deserialize_msg(packet->data, packet->len);
 
@@ -184,109 +243,45 @@ int server_handle_packet(Packet* packet) {
 
     free(msg);
 
-    return 1;
+}    
 
-}
-
-// Send a message
-int server_send_message(MessageHeader* msg) {
+// Start chat server, and run until disconnected
+ChatStatus start_chat_server(char* port) {
 
     int status;
-    char* buffer;
-    int num_bytes;
-    
-    num_bytes = serialize_msg(msg, &buffer);
 
-    if (num_bytes == 0) return -1;
+    status = start_server(port);
 
-    if (msg->to == SERVER_ID) {
-        status = 0;
-        for (int i = 0; i < server.num_users; i++) {
-            status = server_send_packet(server.users[i].id, buffer, num_bytes);
+    if (status != SOCK_SUCCESS) return CHAT_FAILURE;
+
+    server.socket_connection = sock_get_state();
+
+    return CHAT_SUCCESS;
+}  
+
+// Run chat server indefinitely, poll for requests, and forward messages                  
+void chat_server_run(void) {
+
+    int status;
+    Packet* packet;
+
+    do {
+        // Poll for inputs, timeout of one second
+        status = poll_sockets(1000);
+
+        // Check for new connections and disconnections
+        server_sync_users();
+
+        // Check for messages
+        packet = pop_packet();
+
+        // Handle Packet
+        while (packet != NULL) {
+            server_handle_packet(packet);
+            free(packet);
+            packet = pop_packet();
         }
-    } else {
-        status = server_send_packet(msg->to, buffer, num_bytes);
-    }
-    
-    free(buffer);
 
-    return status;
-}
-
-// Send set name request to all users               
-int server_send_user_setname(uint16_t id, char* name) {
-
-    UserMessage user_msg = {0};
-    user_msg.header.type = MSG_USER_SETNAME;
-    user_msg.header.from = SERVER_ID;
-    user_msg.header.to = SERVER_ID; // ALL
-
-    user_msg.id = id;
-    strncpy(user_msg.username, name, MAX_USERNAME_LEN);
-
-    return server_send_message((MessageHeader*)&user_msg);
+    } while (status == SOCK_SUCCESS);
 
 }
-
-// Send user connect message to all users  
-int server_send_user_connect(uint16_t id) {
-
-    UserMessage user_msg = {0};
-    user_msg.header.type = MSG_USER_CONNECT;
-    user_msg.header.from = SERVER_ID;
-    user_msg.header.to = SERVER_ID; // ALL
-
-    user_msg.id = id;
-
-    return server_send_message((MessageHeader*)&user_msg);
-
-}        
-
-// Send user disconnect message to all users      
-int server_send_user_disconnect(uint16_t id) {
-
-    UserMessage user_msg = {0};
-    user_msg.header.type = MSG_USER_DISCONNECT;
-    user_msg.header.from = SERVER_ID;
-    user_msg.header.to = SERVER_ID; // ALL
-
-    user_msg.id = id;
-
-    return server_send_message((MessageHeader*)&user_msg);
-}   
-
-// Send list of all active users to all users        
-int server_send_active_users(uint16_t id) {
-
-    printf("[DEBUG] Broadcasting active users. %d\n", server.num_users);
- 
-    ActiveUserMessage msg = {0};
-
-    // Build active user message
-    msg.header.type = MSG_ACTIVE_USERS;
-    msg.header.from = SERVER_ID;
-    msg.header.to = id;
-
-    msg.num_users = server.num_users;
-
-    for (int i = 0; i < server.num_users; i++) {
-        msg.ids[i] = server.users[i].id;
-        strncpy(msg.usernames[i], server.users[i].name, MAX_USERNAME_LEN);
-    }
-
-    return server_send_message((MessageHeader*)&msg);
-
-}
-
-// Send error message to user      
-int server_send_error(uint16_t id, const char* err) {
-
-    ErrorMessage err_msg = {0};
-    err_msg.header.type = MSG_ERROR;
-    err_msg.header.from = SERVER_ID;
-    err_msg.header.to = id;
-
-    strncpy(err_msg.msg, err, MAX_CHATMSG_LEN);
-
-    return server_send_message((MessageHeader*)&err_msg);
-}        

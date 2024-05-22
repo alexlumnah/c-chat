@@ -64,55 +64,46 @@ typedef struct User {
     char name[MAX_USERNAME_LEN + 1];
 } User;
 
+typedef enum ChatStatus {       // Status codes for Chat Client/Server
+    CHAT_SUCCESS = 0,
+    CHAT_FAILURE,
+} ChatStatus;
+
 typedef struct ChatServer {
-    int num_users;
-    User users[MAX_CLIENTS];
-    SockState* socket_connection;
+    int num_users;                          // Number of users connected to server
+    User users[MAX_CLIENTS];                // Array of users connected to server
+    SockState* socket_connection;           // Pointer to socket interface
 } ChatServer;
 
 typedef struct ChatClient {
-    uint16_t id;                                    // id of this client
-    char name[MAX_USERNAME_LEN + 1];                // Username of this client
-    int num_users;                                  // Number of users in chat room
-    User users[MAX_CLIENTS];                        // List of users in chat room
+    uint16_t id;                            // id of this client
+    char name[MAX_USERNAME_LEN + 1];        // Username of this client
+    int num_users;                          // Number of users in chat room
+    User users[MAX_CLIENTS];                // List of users in chat room
 } ChatClient;
 
+/*
+ * Public Functions:
+ */
 
-// General utilities
+// Serialize/Deserialize Messages
 int serialize_msg(MessageHeader* msg, char** buffer);           // Serialize message, typecast message into header, function will malloc required memory
 MessageHeader* deserialize_msg(char* buffer, int num_bytes);    // Deserialize a message, function will malloc required memory
 
 // Server utilties
-//ChatClient* get_client(void);                           // Get pointer to chat client struct
-int start_chat_server(char* port);                      // Start chat server, and run until disconnected
-int chat_server_run(void);                              // Run chat server, poll for requests, and forward messages
-int server_handle_packet(Packet* packet);               // Handle packet from clients
-int server_sync_users(void);                            // Sync users between socket connection and server
-int server_send_message(MessageHeader* msg);            // Send message based to client addressed in message header
-int server_send_user_setname(uint16_t id, char* name);  // Send set name request to all users
-int server_send_user_connect(uint16_t id);              // Send user connect message to all users
-int server_send_user_disconnect(uint16_t id);           // Send user disconnect message to all users
-int server_send_active_users(uint16_t to);              // Send list of all active users to id
-int server_send_error(uint16_t id, const char* err);    // Send error message to client
+ChatStatus start_chat_server(char* port);                       // Start chat server, and run until disconnected
+void chat_server_run(void);                                     // Run chat server, poll for requests, and forward messages
 
 // Chat Client Utilties
-int start_chat_client(char* host, char* port);          // Start chat client
-void client_run(void);                                  // Start main chat client loop
-void end_chat_client(void);                              // End chat client
-int client_check_messages(int timeout);                 // Poll and handle new messages
-int client_update_active_users(ActiveUserMessage* msg); // Update client list of active users with results of message
-int client_handle_packet(Packet* packet);               // Handle packet, and update chat room state
-int client_send_message(MessageHeader* msg);            // Send a message to the server
-int client_req_user_setname(char* username);            // Send request to server to set client name
-int client_req_active_users(void);                      // Request all active users from server
-int client_ping_server(void);                           // Ping Server
-int client_send_chat(uint16_t to, char* msg);           // Send message to entire chat, expects null terminated string
+ChatStatus start_chat_client(char* host, char* port);           // Start chat client
+ChatStatus client_run(void);                                    // Start main chat client loop
+void end_chat_client(void);                                     // End chat client
 
 // UI Utilities
-void init_window(void);
-void kill_window(void);
-void update_user_display(User* users, int num_users);
-void printf_message(const char* fmt, ...);
-void draw_screen(char* buffer);
+void init_window(void);                                         // Initialize UI Window
+void kill_window(void);                                         // Kill UI Window
+void update_user_display(User* users, int num_users);           // Update User Display
+void printf_message(const char* fmt, ...);                      // Print Message to screen
+void draw_screen(char* buffer);                                 // Draw Screen
 
 #endif // CHAT_H

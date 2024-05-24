@@ -85,23 +85,23 @@ typedef struct ChatClient {
 
 
 // serial.c: Serialize/Deserialize Messages
-int serialize_msg(MessageHeader* msg, char** buffer);           // Serialize message, typecast message into header, function will malloc required memory
-MessageHeader* deserialize_msg(char* buffer, int num_bytes);    // Deserialize a message, function will malloc required memory
+int serialize_msg(const MessageHeader* msg, char** buffer);         // Serialize message, typecast message into header, function will malloc required memory
+MessageHeader* deserialize_msg(char* buffer, int num_bytes);        // Deserialize a message, function will malloc required memory
 
 // server.c: Server Utilties
-ChatStatus start_chat_server(char* port);                       // Start chat server, and run until disconnected
-void chat_server_run(void);                                     // Run chat server, poll for requests, and forward messages
+ChatStatus start_chat_server(const char* port);                     // Start chat server, and run until disconnected
+void chat_server_run(void);                                         // Run chat server, poll for requests, and forward messages
 
 // client.c: Chat Client Utilties
-ChatStatus start_chat_client(char* host, char* port);           // Start chat client
-ChatStatus client_run(void);                                    // Start main chat client loop
-void end_chat_client(void);                                     // End chat client
+ChatStatus start_chat_client(const char* host, const char* port);   // Start chat client
+ChatStatus client_run(void);                                        // Start main chat client loop
+void end_chat_client(void);                                         // End chat client
 
 // ui.c: UI Utilities
 void init_window(void);                                         // Initialize UI Window
 void kill_window(void);                                         // Kill UI Window
-void update_user_display(User* users, int num_users);           // Update User Display
+void update_user_display(const User* users, int num_users);     // Update User Display
 void printf_message(const char* fmt, ...);                      // Print Message to screen
-void draw_screen(char* buffer);                                 // Draw Screen
+void draw_screen(const char* buffer);                           // Draw Screen
 
 #endif // CHAT_H

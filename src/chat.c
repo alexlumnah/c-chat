@@ -1,10 +1,9 @@
 #include <stdio.h>
 #include <string.h>
-#include <curses.h>
 
 #include "chat.h"    
 
-int main(int argc, char* argv[]) {
+int main(int argc, const char* argv[]) {
 
     ChatStatus status;
 
@@ -34,12 +33,11 @@ int main(int argc, char* argv[]) {
         status = client_run();
 
         // Shutdown client
-        if (status == CHAT_FAILURE) {
-            printf("Server disconnected.\n");
-        }
-
-        printf("Disconnecting from server.\n");
         end_chat_client();
+
+        if (status == CHAT_FAILURE) {
+            printf("Server disconnected unexpectedly.\n");
+        }
 
     }
     

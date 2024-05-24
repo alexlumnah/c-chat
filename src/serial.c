@@ -2,10 +2,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <arpa/inet.h>
 
 #include "chat.h"
-#include "sock.h"
 
 typedef struct DataBuffer {
     char* buffer;       // Pointer to start of buffer
@@ -36,15 +36,13 @@ static int inc_db(DataBuffer* db, int num_bytes) {
 }
 
 // Return true if there is enough room in buffer for num_bytes
-static bool db_has_room(DataBuffer* db, int num_bytes) {
+static bool db_has_room(const DataBuffer* db, int num_bytes) {
     return (db->ptr + num_bytes) <= (db->buffer + db->size);
 }
 
 // Return number of bits up to and including next null byte in data buffer
 // Return -1 if buffer ends without null byte, or exceeds max str len
-static int db_strnlen(DataBuffer* db, int max_len) {
-
-    // int len = strnlen(db->ptr, db->buffer + db->size - db->ptr) + 1;
+static int db_strnlen(const DataBuffer* db, int max_len) {
 
     // Iterate through list until you hit a null byte or end of buffer
     char* str_ptr = db->ptr;
@@ -63,7 +61,7 @@ static int db_strnlen(DataBuffer* db, int max_len) {
 
 // Serialize message, typecast message into header, function will alloc required memory
 // Return number of bytes in buffer, return -1 on error
-int serialize_msg(MessageHeader* msg, char** buffer) {
+int serialize_msg(const MessageHeader* msg, char** buffer) {
 
     int status;
     DataBuffer db = {0};
@@ -155,7 +153,6 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         ActiveUserMessage* user_msg = (ActiveUserMessage*)msg;
         uint8_t num_users = user_msg->num_users;
         uint16_t id;
-        int un_len;
 
         // Allocate data buffer memory
         status = init_empty_buff(&db, sizeof(ActiveUserMessage));
@@ -194,7 +191,7 @@ int serialize_msg(MessageHeader* msg, char** buffer) {
         for (int i = 0; i < num_users; i++) {
 
             // Get length of username, ensure it ends in a null byte
-            un_len = strnlen(user_msg->usernames[i], MAX_USERNAME_LEN) + 1;
+            int un_len = strnlen(user_msg->usernames[i], MAX_USERNAME_LEN) + 1;
             if (user_msg->usernames[i][un_len - 1] != 0) {
                 free(db.buffer);
                 return -1;
@@ -323,7 +320,7 @@ MessageHeader* deserialize_msg(char* buffer, int buffer_size) {
     // Initialize our data buffer structure
     DataBuffer db = {0};
     db.buffer = buffer;
-    db.ptr = buffer;
+    db.ptr = db.buffer;
     db.size = buffer_size;
 
     int un_len;
@@ -397,7 +394,7 @@ MessageHeader* deserialize_msg(char* buffer, int buffer_size) {
 
         // Confirm we reached the end of the buffer
         if (db_has_room(&db, 1)) {
-            free(msg);
+            free(ping_msg);
             return NULL;
         }
 

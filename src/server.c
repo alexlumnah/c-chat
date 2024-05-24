@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "chat.h"
 #include "sock.h"
@@ -40,7 +41,7 @@ static bool username_taken(const char* username) {
 }
 
 // Send a message
-static ChatStatus server_send_message(MessageHeader* msg) {
+static ChatStatus server_send_message(const MessageHeader* msg) {
 
     int status;
     char* buffer;
@@ -48,7 +49,7 @@ static ChatStatus server_send_message(MessageHeader* msg) {
     
     num_bytes = serialize_msg(msg, &buffer);
 
-    if (num_bytes == 0) return -1;
+    if (num_bytes == 0) return CHAT_FAILURE;
 
     if (msg->to == SERVER_ID) {
         status = 0;
@@ -65,7 +66,7 @@ static ChatStatus server_send_message(MessageHeader* msg) {
 }
 
 // Send set name request to all users               
-static ChatStatus server_send_user_setname(uint16_t id, char* name) {
+static ChatStatus server_send_user_setname(uint16_t id, const char* name) {
 
     UserMessage user_msg = {0};
     user_msg.header.type = MSG_USER_SETNAME;
@@ -109,7 +110,7 @@ static ChatStatus server_send_user_disconnect(uint16_t id) {
 // Send list of all active users to all users        
 static ChatStatus server_send_active_users(uint16_t id) {
 
-    printf("[DEBUG] Broadcasting active users. %d\n", server.num_users);
+    printf("Broadcasting %d active users.\n", server.num_users);
  
     ActiveUserMessage msg = {0};
 
@@ -145,18 +146,13 @@ static int server_send_error(uint16_t id, const char* err) {
 // Check for new connections and disconnections
 static void server_sync_users(void) {
 
-    uint16_t user_id;
-    int user_index;
-    bool user_exists;
-    bool user_active;
-
     // Iterate over all connected clients
     for (int i = 0; i < server.socket_connection->num_clients; i++) {
 
-        user_id = server.socket_connection->clients[i].id;
-        user_index = get_user_index(user_id);
-        user_exists = check_user_exists(user_id);
-        user_active = server.socket_connection->clients[i].active;
+        uint16_t user_id = server.socket_connection->clients[i].id;
+        int user_index = get_user_index(user_id);
+        bool user_exists = check_user_exists(user_id);
+        bool user_active = server.socket_connection->clients[i].active;
 
         // If user isn't in chat, broadcast connection and update user list
         if (!user_exists && user_active) {
@@ -188,7 +184,7 @@ static void server_handle_packet(Packet* packet) {
 
     MessageHeader* msg = deserialize_msg(packet->data, packet->len);
 
-    printf("[DEBUG] Handingle message of type %d!\n", msg->type);
+    printf("Handling message of type: %d\n", msg->type);
 
     switch (msg->type) {
     case MSG_PING: {
@@ -205,18 +201,18 @@ static void server_handle_packet(Packet* packet) {
         // First confirm user exists
         int user_index = get_user_index(packet->sender);
         if (user_index == -1) {
-            printf("[ERROR] Received packet from unknown sender.\n");
+            printf("[ERROR] Received packet from unknown sender\n");
             break;
         }
 
         // Confirm username isn't taken
         if (username_taken(((UserMessage*)msg)->username)) {
-            printf("[DEBUG] Username already taken.\n");
+            printf("User id: %d requested taken username: %s\n",packet->sender,((UserMessage*)msg)->username);
             server_send_error(packet->sender, "Username already taken.");
             break;
         }
 
-        printf("[DEBUG] Setting Username for id %d to %s\n", packet->sender, ((UserMessage*)msg)->username);
+        printf("Setting name of id %d to: %s\n",packet->sender,((UserMessage*)msg)->username);
         strncpy(server.users[user_index].name, ((UserMessage*)msg)->username, MAX_USERNAME_LEN);
         server_send_user_setname(packet->sender, server.users[user_index].name);
         break;
@@ -226,7 +222,7 @@ static void server_handle_packet(Packet* packet) {
         break;
     case MSG_CHAT: {
         // Forward chat message to destination
-        printf("[DEBUG] Forwarding chat to id %d.\n",msg->to);
+        printf("Forwarding chat to id: %d\n",msg->to);
         if (msg->to == SERVER_ID) {
             for (int i = 0; i < server.num_users; i++) {
                 server_socket_send_packet(server.users[i].id, packet->data, packet->len);
@@ -246,7 +242,7 @@ static void server_handle_packet(Packet* packet) {
 }    
 
 // Start chat server, and run until disconnected
-ChatStatus start_chat_server(char* port) {
+ChatStatus start_chat_server(const char* port) {
 
     int status;
 
@@ -263,9 +259,11 @@ ChatStatus start_chat_server(char* port) {
 void chat_server_run(void) {
 
     int status;
-    Packet* packet;
 
     do {
+
+        Packet* packet;
+
         // Poll for inputs, timeout of one second
         status = poll_sockets(1000);
 

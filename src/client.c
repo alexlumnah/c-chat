@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdbool.h>
 #include <string.h>
@@ -30,7 +31,7 @@ static bool check_user_exists(uint16_t id) {
 }
 
 // Send message              
-static ChatStatus client_send_message(MessageHeader* msg) {
+static ChatStatus client_send_message(const MessageHeader* msg) {
 
     int status;
     char* buffer;
@@ -52,7 +53,7 @@ static ChatStatus client_send_message(MessageHeader* msg) {
 }
 
 // Send request to server to set client name      
-static ChatStatus client_req_user_setname(char* username) {
+static ChatStatus client_req_user_setname(const char* username) {
 
     UserMessage user_msg = {0};
     user_msg.header.type = MSG_USER_SETNAME;
@@ -79,7 +80,7 @@ static ChatStatus client_ping_server(void) {
 }
 
 // Send a chat message                
-static ChatStatus client_send_chat(uint16_t to, char* msg_text) {
+static ChatStatus client_send_chat(uint16_t to, const char* msg_text) {
 
     ChatMessage chat_msg = {0};
     chat_msg.header.type = MSG_CHAT;
@@ -93,7 +94,7 @@ static ChatStatus client_send_chat(uint16_t to, char* msg_text) {
 }
 
 // Interpret user input
-static void interpret_input(char* buffer, int buff_len) {
+static void interpret_input(const char* buffer, int buff_len) {
 
     // If not a command, send message
     if (buffer[0] != '/') {
@@ -120,7 +121,7 @@ static void interpret_input(char* buffer, int buff_len) {
 }
 
 // Update list of all active users in client
-static void client_update_active_users(ActiveUserMessage* msg) {
+static void client_update_active_users(const ActiveUserMessage* msg) {
     
     // Compare client list against server list, and add any new users
     for (int i = 0; i < msg->num_users; i++) {
@@ -133,9 +134,8 @@ static void client_update_active_users(ActiveUserMessage* msg) {
     }
 
     // Also double check that all clients are in server list
-    bool user_active;
     for (int i = client.num_users - 1; i >= 0; i--) {
-        user_active = false;
+        bool user_active = false;
         for (int j = 0; j < msg->num_users; j++) {
             if (client.users[i].id == msg->ids[j]) {
                 user_active = true;
@@ -275,7 +275,7 @@ static ChatStatus client_check_messages(int timeout) {
 }
 
 // Start chat client
-ChatStatus start_chat_client(char* host, char* port) {
+ChatStatus start_chat_client(const char* host, const char* port) {
 
     int status;
     Packet* packet;

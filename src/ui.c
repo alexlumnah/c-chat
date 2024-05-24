@@ -32,7 +32,7 @@ void kill_window(void) {
     endwin();
 }
 
-void update_user_display(User* user_list, int num_users) {
+void update_user_display(const User* user_list, int num_users) {
 
     int row = 0;
     wclear(users);
@@ -73,7 +73,7 @@ void printf_message(const char* fmt, ...) {
     va_end(vargs);
 }
 
-void draw_screen(char* buffer) {
+void draw_screen(const char* buffer) {
 
     // Clear input bar, write buffer
     wclear(input);

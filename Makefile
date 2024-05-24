@@ -26,3 +26,9 @@ test: test/test.o src/sock.o src/serial.o
 
 clean:
 	rm server client $(OBJ)
+
+tidy:
+	clang-tidy src/* -- $(CFLAGS)
+
+cppcheck:
+	cppcheck --enable=portability --check-level=exhaustive --enable=style src/*.c

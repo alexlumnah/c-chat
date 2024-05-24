@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/poll.h>
+#include <stdbool.h>
 
 #define MAX_MESSAGE_LEN (65535)
 #define MAX_CLIENTS     (255)
@@ -60,29 +61,32 @@ typedef struct SocketState {
 
     Packet* packet_queue;               // Incoming Packet Queue
 
+    bool verbose;                       // Whether to print errors or not, default to false
+
 } SocketState;
 
 
 // General functions
 SocketState* sock_get_state(void);                              // Get pointer to global state
 SocketStatus poll_sockets(int timeout);                         // Poll sockets for incoming connections or messages
+void sock_set_verbose(bool verbose);                            // Set verbosity
 
 // Packet Queue Operations
 int num_packets(void);                                          // Check how many messages are in the queue
 Packet* pop_packet(void);                                       // Pop message at top of message queue and return pointer. Ownership passes to caller.
 
 // Server Socket Functions
-SocketStatus start_server_socket(char* port);                                   // Start a server on the local host at specified port
+SocketStatus start_server_socket(const char* port);                             // Start a server on the local host at specified port
 SocketStatus accept_client_socket(void);                                        // Accept any incoming connections, called from server poll
 SocketStatus disconnect_client_socket(uint16_t client_id);                      // Close connection to a client
 SocketStatus flush_inactive_client_sockets(void);                               // Stop tracking all inactive clients
-SocketStatus server_socket_send_packet(uint16_t client_id, char* data, size_t num_bytes); // Send message from server to client
+SocketStatus server_socket_send_packet(uint16_t client_id, const char* data, size_t num_bytes); // Send message from server to client
 SocketStatus server_socket_recv_packet(uint16_t client_id);                     // Receive and unpack a message, store in message queue
 SocketStatus shutdown_server_socket(void);                                      // Shutdown server
 
 // Client Socket Functions
-SocketStatus start_client_socket(char* host, char* port);                       // Start a client and connect to host at specified port
-SocketStatus client_socket_send_packet(char* data, size_t num_bytes);           // Send message from client to server
+SocketStatus start_client_socket(const char* host, const char* port);           // Start a client and connect to host at specified port
+SocketStatus client_socket_send_packet(const char* data, size_t num_bytes);     // Send message from client to server
 SocketStatus shutdown_client_socket(void);                                      // Shutdown client
 
 #endif // SOCK_H

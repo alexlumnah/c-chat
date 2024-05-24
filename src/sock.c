@@ -2,6 +2,8 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include <stdint.h>
+#include <stddef.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -13,11 +15,18 @@
 
 #include "sock.h"
 
-#define PRINT_ERROR(packet) (fprintf(stderr, "[ERROR] %s Exit with error: %s\n", packet, strerror(errno)))
-#define PRINT_ERROR2(packet1, packet2) (fprintf(stderr, "[ERROR] %s %s\n", packet1, packet2))
-#define DEBUG_PRINT(packet) (printf("[DEBUG] %s\n", packet))
-#define DEBUG_PRINT2(packet1, packet2) (printf("[DEBUG] %s %s\n", packet1, packet2))
-#define DEBUG_PRINT3(packet1, val) (printf("[DEBUG] %s %d\n", packet1, val))
+#define PRINT_ERROR(msg) (fprintf(stderr, "[ERROR] %s Exit with error: %s\n", msg, strerror(errno)))
+#define PRINT_ERROR2(msg1, msg2) (fprintf(stderr, "[ERROR] %s %s\n", msg1, msg2))
+
+#ifdef DEBUG
+#define DEBUG_PRINT(msg) (printf("[DEBUG] %s\n", msg))
+#define DEBUG_PRINT2(msg1, msg2) (printf("[DEBUG] %s %s\n", msg1, msg2))
+#define DEBUG_PRINT3(msg, val) (printf("[DEBUG] %s %d\n", msg, val))
+#else
+#define DEBUG_PRINT(msg)
+#define DEBUG_PRINT2(msg1, msg2)
+#define DEBUG_PRINT3(msg, val)
+#endif
 
 static SocketState connection;
 
@@ -46,7 +55,7 @@ static int fd_to_id(int fd) {
 }
 
 // Send data to a socket
-static SocketStatus send_packet(int socket_fd, char* data, size_t num_bytes) {
+static SocketStatus send_packet(int socket_fd, const char* data, size_t num_bytes) {
 
     int bytes_sent;
     uint16_t nw_len;
@@ -71,7 +80,7 @@ static SocketStatus send_packet(int socket_fd, char* data, size_t num_bytes) {
 // Allocates memory for storage, hands ownership to queue owner
 static SocketStatus recv_packet(int socket_fd) {
 
-    ssize_t num_bytes;
+    size_t num_bytes;
     char buffer[MAX_MESSAGE_LEN] = {0};
     uint16_t packet_len = 0;
 
@@ -172,7 +181,7 @@ Packet* pop_packet(void) {
 }            
 
 // Start a server on the local host at specified port
-SocketStatus start_server_socket(char* port) {
+SocketStatus start_server_socket(const char* port) {
 
     memset(&connection, 0, sizeof connection);   // Clear out state
 
@@ -349,7 +358,7 @@ SocketStatus flush_inactive_client_sockets(void) {
 }
 
 // Send packet to client
-SocketStatus server_socket_send_packet(uint16_t client_id, char* data, size_t num_bytes) {
+SocketStatus server_socket_send_packet(uint16_t client_id, const char* data, size_t num_bytes) {
 
     return send_packet(id_to_fd(client_id), data, num_bytes);
 }
@@ -455,7 +464,7 @@ SocketStatus poll_sockets(int timeout) {
 }
 
 // Start a client and connect to host at specified port
-SocketStatus start_client_socket(char* host, char* port) {
+SocketStatus start_client_socket(const char* host, const char* port) {
 
     int status;             // Variable for storing function return status
     int socket_fd;           // Variable for storing socket file descriptor
@@ -523,7 +532,7 @@ SocketStatus start_client_socket(char* host, char* port) {
 }
 
 // Send packet from client to server
-SocketStatus client_socket_send_packet(char* data, size_t num_bytes) {
+SocketStatus client_socket_send_packet(const char* data, size_t num_bytes) {
 
     if (connection.type != SOCK_CLIENT) return SOCK_ERR_INVALID_CMD;
 

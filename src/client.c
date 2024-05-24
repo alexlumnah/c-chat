@@ -371,7 +371,7 @@ ChatStatus client_run(void) {
         } 
 
         // Update screen
-        draw_screen(buffer);
+        draw_buffer(buffer);
 
     } while (c != 27 && status != CHAT_FAILURE);
 

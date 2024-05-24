@@ -80,7 +80,7 @@ static SocketStatus send_packet(int socket_fd, const char* data, size_t num_byte
 // Allocates memory for storage, hands ownership to queue owner
 static SocketStatus recv_packet(int socket_fd) {
 
-    size_t num_bytes;
+    ssize_t num_bytes;
     char buffer[MAX_MESSAGE_LEN] = {0};
     uint16_t packet_len = 0;
 

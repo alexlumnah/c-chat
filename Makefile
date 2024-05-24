@@ -2,8 +2,6 @@
 CC = gcc
 
 # Compiler Flags:
-#  -g    adds debugging information to the executable file
-#  -Wall turns on most, but not all, compiler warnings
 CFLAGS = -g -Wall -Wpedantic -Wextra -fsanitize=address,undefined,signed-integer-overflow
 LDFLAGS = -lncurses
 
@@ -19,16 +17,16 @@ all: main
 	$(CC) -o $@ -c $< $(CFLAGS)
 
 main: $(OBJ)
-	$(CC) -o main $^ $(CFLAGS) $(LDFLAGS)
+	$(CC) -o chat $^ $(CFLAGS) $(LDFLAGS)
 
 test: test/test.o src/sock.o src/serial.o
 	$(CC) -o run_test $^ $(CFLAGS) $(LDFLAGS)
 
 clean:
-	rm server client $(OBJ)
+	rm chat run_test test/test.o $(OBJ)
 
 tidy:
-	clang-tidy src/* -- $(CFLAGS)
+	clang-tidy src/* --
 
 cppcheck:
 	cppcheck --enable=portability --check-level=exhaustive --enable=style src/*.c

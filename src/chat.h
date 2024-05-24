@@ -2,6 +2,7 @@
 #define CHAT_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include "sock.h"
 
@@ -98,10 +99,10 @@ ChatStatus client_run(void);                                        // Start mai
 void end_chat_client(void);                                         // End chat client
 
 // ui.c: UI Utilities
-void init_window(void);                                         // Initialize UI Window
-void kill_window(void);                                         // Kill UI Window
-void update_user_display(const User* users, int num_users);     // Update User Display
-void printf_message(const char* fmt, ...);                      // Print Message to screen
-void draw_screen(const char* buffer);                           // Draw Screen
+void init_window(void);                                             // Initialize UI Window
+void kill_window(void);                                             // Kill UI Window
+void update_user_display(const User* users, int num_users);         // Update User Display
+void printf_message(const char* fmt, ...);                          // Print Message to screen
+void draw_buffer(const char* buffer);                               // Draw Screen
 
 #endif // CHAT_H

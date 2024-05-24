@@ -16,6 +16,7 @@ void init_window(void) {
     // Initialize curses library
     initscr();
     noecho();
+    keypad(stdscr, TRUE);
     timeout(0); // Dont wait block when waiting for input
 
     // Create windows for displaying text
@@ -26,6 +27,13 @@ void init_window(void) {
     // Additional config
     scrollok(chat, TRUE);
     wsetscrreg(chat, 0, LINES - 3);
+
+    // Initialize all screens
+    refresh();
+    //prefresh(chat, 0, 0, 0, 0, LINES - INPUT_HEIGHT, COLS - USER_WIDTH);
+    //prefresh(users, 0, 0, 0, COLS - USER_WIDTH, LINES - INPUT_HEIGHT, COLS);
+    //prefresh(input, 0, 0, LINES - INPUT_HEIGHT, 0, LINES, COLS);
+
 }
 
 void kill_window(void) {
@@ -51,6 +59,8 @@ void update_user_display(const User* user_list, int num_users) {
         row++;
         wprintw(users, "%d: %s\n", user_list[i].id, user_list[i].name);
     }
+
+    prefresh(users, 0, 0, 0, COLS - USER_WIDTH, LINES - INPUT_HEIGHT, COLS);
     
 }
 
@@ -71,9 +81,11 @@ void printf_message(const char* fmt, ...) {
 
     // Clean up variable arguments
     va_end(vargs);
+
+    prefresh(chat, 0, 0, 0, 0, LINES - INPUT_HEIGHT, COLS - USER_WIDTH);
 }
 
-void draw_screen(const char* buffer) {
+void draw_buffer(const char* buffer) {
 
     // Clear input bar, write buffer
     wclear(input);
@@ -82,8 +94,6 @@ void draw_screen(const char* buffer) {
     wmove(input, 1, 0);
     wprintw(input, "> %s", buffer);
 
-    // Draw each window
-    prefresh(chat, 0, 0, 0, 0, LINES - INPUT_HEIGHT, COLS - USER_WIDTH);
-    prefresh(users, 0, 0, 0, COLS - USER_WIDTH, LINES - INPUT_HEIGHT, COLS);
+    // Draw buffer
     prefresh(input, 0, 0, LINES - INPUT_HEIGHT, 0, LINES, COLS);
 }
